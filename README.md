@@ -191,9 +191,9 @@ pwd
 The example below assumes:
 
 ```text
-User: aksoy
-Project: /Users/aksoy/Documents/agent
-Virtual environment: /Users/aksoy/Documents/agent/.venv
+User: YOUR_USERNAME
+Project: /Users/YOUR_USERNAME/personal-agent
+Virtual environment: /Users/YOUR_USERNAME/personal-agent/.venv
 ```
 
 Create a LaunchAgent file:
@@ -215,12 +215,12 @@ Add:
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/aksoy/Documents/agent/.venv/bin/python</string>
-        <string>/Users/aksoy/Documents/agent/agent-server</string>
+        <string>/Users/YOUR_USERNAME/personal-agent/.venv/bin/python</string>
+        <string>/Users/YOUR_USERNAME/personal-agent/agent-server</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/aksoy/Documents/agent</string>
+    <string>/Users/YOUR_USERNAME/personal-agent</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -229,10 +229,10 @@ Add:
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/aksoy/Documents/agent/agent-server.log</string>
+    <string>/Users/YOUR_USERNAME/personal-agent/agent-server.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/aksoy/Documents/agent/agent-server-error.log</string>
+    <string>/Users/YOUR_USERNAME/personal-agent/agent-server-error.log</string>
 </dict>
 </plist>
 ```
@@ -274,19 +274,19 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server
 View output:
 
 ```bash
-tail -f /Users/aksoy/Documents/agent/agent-server.log
+tail -f /Users/YOUR_USERNAME/personal-agent/agent-server.log
 ```
 
 View errors:
 
 ```bash
-tail -f /Users/aksoy/Documents/agent/agent-server-error.log
+tail -f /Users/YOUR_USERNAME/personal-agent/agent-server-error.log
 ```
 
 After the LaunchAgent is running, launch only the client when you want to use the agent:
 
 ```bash
-cd /Users/aksoy/Documents/agent
+cd /Users/YOUR_USERNAME/personal-agent
 source .venv/bin/activate
 ./agent
 ```
@@ -444,9 +444,9 @@ This step is optional. On Linux and Raspberry Pi OS, the backend can run continu
 The following example assumes:
 
 ```text
-User: aksoy
-Project: /home/aksoy/Documents/agent
-Virtual environment: /home/aksoy/Documents/agent/.venv
+User: YOUR_USERNAME
+Project: /home/YOUR_USERNAME/personal-agent
+Virtual environment: /home/YOUR_USERNAME/personal-agent/.venv
 ```
 
 If your username or project path differs, change the paths accordingly.
@@ -467,9 +467,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=aksoy
-WorkingDirectory=/home/aksoy/Documents/agent
-ExecStart=/home/aksoy/Documents/agent/.venv/bin/python /home/aksoy/Documents/agent/agent-server
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/personal-agent
+ExecStart=/home/YOUR_USERNAME/personal-agent/.venv/bin/python /home/YOUR_USERNAME/personal-agent/agent-server
 Restart=on-failure
 RestartSec=5
 
@@ -542,7 +542,7 @@ journalctl -u agent-server -f
 After the service is running, you only need to launch the client:
 
 ```bash
-cd /home/aksoy/Documents/agent
+cd /home/YOUR_USERNAME/personal-agent
 source .venv/bin/activate
 ./agent
 ```
@@ -819,6 +819,20 @@ The project keeps configuration and private data locally.
 At minimum, configure the OpenAI API credentials expected by
 `agent-server` in `.env`.
 
+The repository also includes `.env.example`. You can copy it to create your local configuration:
+
+```bash
+cp .env.example .env
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then edit `.env` and replace the placeholder value with your own OpenAI API key.
+
 A typical installation will contain files similar to:
 
 ``` text
@@ -831,6 +845,7 @@ personal-agent/
 ├── .env                       # local only
 ├── memory.json                # local only
 ├── notes.db                   # local only
+├── agent.db                   # local only
 └── ...
 ```
 
@@ -922,6 +937,7 @@ credentials.json
 client_secret*.json
 memory.json
 notes.db
+agent.db
 rules.json
 memory_embeddings.npz
 note_embeddings.npz
@@ -988,6 +1004,7 @@ Before uninstalling, decide whether you want to keep your local agent data. Depe
 .env
 memory.json
 notes.db
+agent.db
 rules.json
 memory_embeddings.npz
 note_embeddings.npz
@@ -1087,4 +1104,4 @@ If you authorized Google Calendar, deleting the local Google token removes the a
 
 # License
 
-Private project. No license is currently specified.
+No open-source license is currently specified. If this repository is made public for others to reuse, modify, or redistribute, add an appropriate license such as the MIT License.

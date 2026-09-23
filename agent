@@ -213,7 +213,7 @@ def api(method, path, payload=None):
     except urllib.error.URLError as exc:
         raise RuntimeError(
             "Cannot connect to Agent Server at 127.0.0.1:8765. "
-            "Check: sudo systemctl status agent-server"
+            "Make sure agent-server is running"
         ) from exc
 
 
@@ -250,7 +250,7 @@ def api_stream_chat(message, stateless=False):
     except urllib.error.URLError as exc:
         raise RuntimeError(
             "Cannot connect to Agent Server at 127.0.0.1:8765. "
-            "Check: sudo systemctl status agent-server"
+            "Make sure agent-server is running"
         ) from exc
 
 
