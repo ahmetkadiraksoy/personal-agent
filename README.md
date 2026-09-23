@@ -123,6 +123,139 @@ source .venv/bin/activate
 
 ------------------------------------------------------------------------
 
+## Run the server automatically with launchd
+
+On macOS, the equivalent of a Linux `systemd` service is a `launchd` LaunchAgent. This keeps the backend running in the background and can start it automatically when you log in.
+
+First determine your project path:
+
+```bash
+cd /path/to/personal-agent
+pwd
+```
+
+The example below assumes:
+
+```text
+User: aksoy
+Project: /Users/aksoy/Documents/agent
+Virtual environment: /Users/aksoy/Documents/agent/.venv
+```
+
+Create a LaunchAgent file:
+
+```bash
+nano ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+Add:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.personalagent.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/aksoy/Documents/agent/.venv/bin/python</string>
+        <string>/Users/aksoy/Documents/agent/agent-server</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/aksoy/Documents/agent</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/aksoy/Documents/agent/agent-server.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/aksoy/Documents/agent/agent-server-error.log</string>
+</dict>
+</plist>
+```
+
+Change the username and paths if the project is installed elsewhere.
+
+Load and start it:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+### Service management
+
+Check whether it is loaded:
+
+```bash
+launchctl print gui/$(id -u)/com.personalagent.server
+```
+
+Restart it:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.personalagent.server
+```
+
+Stop and unload it:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+Load it again:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+View output:
+
+```bash
+tail -f /Users/aksoy/Documents/agent/agent-server.log
+```
+
+View errors:
+
+```bash
+tail -f /Users/aksoy/Documents/agent/agent-server-error.log
+```
+
+After the LaunchAgent is running, launch only the client when you want to use the agent:
+
+```bash
+cd /Users/aksoy/Documents/agent
+source .venv/bin/activate
+./agent
+```
+
+### After updating the code
+
+If only `agent` changes, no backend restart is required.
+
+If `agent-server` changes:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.personalagent.server
+```
+
+If the `.plist` file itself changes, unload and reload it:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+---
+
 ## Linux / Raspberry Pi OS
 
 These instructions assume a Debian/Ubuntu/Raspberry Pi OS-based system.
@@ -196,8 +329,132 @@ source .venv/bin/activate
 ./agent
 ```
 
-For an always-on Linux or Raspberry Pi installation, the server can
-optionally be configured as a `systemd` service.
+## Run the server automatically with systemd
+
+On Linux and Raspberry Pi OS, the backend can run continuously as a `systemd` service. This means it can start automatically at boot and you do not need to leave a terminal open.
+
+The following example assumes:
+
+```text
+User: aksoy
+Project: /home/aksoy/Documents/agent
+Virtual environment: /home/aksoy/Documents/agent/.venv
+```
+
+If your username or project path differs, change the paths accordingly.
+
+Create the service:
+
+```bash
+sudo nano /etc/systemd/system/agent-server.service
+```
+
+Use:
+
+```ini
+[Unit]
+Description=Personal AI Agent Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aksoy
+WorkingDirectory=/home/aksoy/Documents/agent
+ExecStart=/home/aksoy/Documents/agent/.venv/bin/python /home/aksoy/Documents/agent/agent-server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload `systemd`:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+Enable the service at boot and start it immediately:
+
+```bash
+sudo systemctl enable --now agent-server
+```
+
+### Service management
+
+Check status:
+
+```bash
+systemctl status agent-server
+```
+
+Start:
+
+```bash
+sudo systemctl start agent-server
+```
+
+Stop:
+
+```bash
+sudo systemctl stop agent-server
+```
+
+Restart:
+
+```bash
+sudo systemctl restart agent-server
+```
+
+Enable automatic startup:
+
+```bash
+sudo systemctl enable agent-server
+```
+
+Disable automatic startup:
+
+```bash
+sudo systemctl disable agent-server
+```
+
+View recent logs:
+
+```bash
+journalctl -u agent-server -n 100
+```
+
+Follow logs live:
+
+```bash
+journalctl -u agent-server -f
+```
+
+After the service is running, you only need to launch the client:
+
+```bash
+cd /home/aksoy/Documents/agent
+source .venv/bin/activate
+./agent
+```
+
+### After updating the code
+
+If only `agent` changes, no server restart is required.
+
+If `agent-server` changes:
+
+```bash
+sudo systemctl restart agent-server
+```
+
+If the `.service` file itself changes:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart agent-server
+```
 
 ------------------------------------------------------------------------
 
@@ -294,6 +551,104 @@ Windows Subsystem for Linux (WSL) is an alternative way to run the Linux
 installation.
 
 ------------------------------------------------------------------------
+
+## Run the server automatically with Windows Task Scheduler
+
+On Windows, Task Scheduler can provide the equivalent behavior: start `agent-server` automatically when you sign in and keep the terminal client separate.
+
+The example below assumes:
+
+```text
+Project: C:\Users\YOUR_USERNAME\Documents\personal-agent
+Virtual environment: C:\Users\YOUR_USERNAME\Documents\personal-agent\.venv
+```
+
+Replace the paths with your actual installation location.
+
+### Create the scheduled task
+
+1. Open **Task Scheduler**.
+2. Select **Create Task**.
+3. On **General**:
+   - Name it `Personal AI Agent Server`.
+   - Select **Run only when user is logged on** unless you specifically need background execution before login.
+4. On **Triggers**:
+   - Create a trigger **At log on** for your user account.
+5. On **Actions**, create **Start a program**.
+6. For **Program/script**, enter:
+
+```text
+C:\Users\YOUR_USERNAME\Documents\personal-agent\.venv\Scripts\python.exe
+```
+
+7. For **Add arguments**, enter:
+
+```text
+C:\Users\YOUR_USERNAME\Documents\personal-agent\agent-server
+```
+
+8. For **Start in**, enter:
+
+```text
+C:\Users\YOUR_USERNAME\Documents\personal-agent
+```
+
+9. Save the task.
+
+### Service management
+
+Start the task manually from PowerShell:
+
+```powershell
+Start-ScheduledTask -TaskName "Personal AI Agent Server"
+```
+
+Check its state:
+
+```powershell
+Get-ScheduledTask -TaskName "Personal AI Agent Server"
+```
+
+Stop it:
+
+```powershell
+Stop-ScheduledTask -TaskName "Personal AI Agent Server"
+```
+
+Disable automatic execution:
+
+```powershell
+Disable-ScheduledTask -TaskName "Personal AI Agent Server"
+```
+
+Enable it again:
+
+```powershell
+Enable-ScheduledTask -TaskName "Personal AI Agent Server"
+```
+
+After the scheduled task is running, start only the client when needed:
+
+```powershell
+cd C:\Users\YOUR_USERNAME\Documents\personal-agent
+.\.venv\Scripts\Activate.ps1
+python .\agent
+```
+
+### After updating the code
+
+If only `agent` changes, no backend restart is required.
+
+If `agent-server` changes, restart the scheduled task:
+
+```powershell
+Stop-ScheduledTask -TaskName "Personal AI Agent Server"
+Start-ScheduledTask -TaskName "Personal AI Agent Server"
+```
+
+If you change the task configuration itself, update it in Task Scheduler.
+
+---
 
 # Configuration
 
