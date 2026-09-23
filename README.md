@@ -30,6 +30,7 @@ are intentionally kept outside version control.
 - [Moving to a New Computer](#moving-to-a-new-computer)
 - [Platform Notes](#platform-notes)
 - [Uninstall](#uninstall)
+- [Disclaimer](#disclaimer)
 - [License](#license)
 
 ------------------------------------------------------------------------
@@ -1146,6 +1147,10 @@ The Python virtual environment (`.venv`) is stored inside the project directory,
 If you authorized Google Calendar, deleting the local Google token removes the agent's local authorization data. You can separately revoke the application's access from your Google account if you want to revoke the authorization itself.
 
 ---
+
+## Disclaimer
+
+This software is provided for personal and educational use without warranty. Users are responsible for securing their credentials, reviewing API usage and associated costs, protecting locally stored data, and complying with the terms, policies, and requirements of any third-party services they connect to the software.
 
 # License
 
