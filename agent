@@ -1,0 +1,919 @@
+#!/usr/bin/env python3
+import json
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.key_binding import KeyBindings
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.text import Text
+
+BASE_URL = "http://127.0.0.1:8765"
+console = Console()
+
+_NOTIFICATION_INDEX_MAP = {}
+_NOTE_INDEX_MAP = {}
+_MEMORY_INDEX_MAP = {}
+_TASK_INDEX_MAP = {}
+
+
+COMMANDS = [
+    "/stateless", "/clear", "/history", "/memory", "/notes",
+    "/usage", "/status", "/rules", "/tasks", "/inbox",
+    "/help", "/exit", "/quit",
+]
+
+
+class AgentCompleter(Completer):
+    """Shell-style, context-aware completion for Agent slash commands."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if "\n" in text:
+            # Work only within the current line of a multiline prompt.
+            text = text.rsplit("\n", 1)[-1]
+
+        # Slash commands may appear anywhere in a normal prompt. Complete the
+        # slash expression nearest to the cursor, rather than requiring the
+        # entire input to begin with '/'.
+        slash_index = text.rfind("/")
+        if slash_index < 0:
+            return
+        fragment = text[slash_index:]
+
+        # Complete the command itself. A slash starts a command token; if the
+        # fragment already contains whitespace, handle it as command + arg.
+        if " " not in fragment and "\t" not in fragment:
+            prefix = fragment.lower()
+            for command in COMMANDS:
+                if command.startswith(prefix) and command != prefix:
+                    yield Completion(command, start_position=-len(fragment))
+            return
+
+        command, _, argument = fragment.partition(" ")
+        command = command.lower()
+        if command not in {
+            "/notes", "/memory", "/inbox", "/tasks",
+        }:
+            return
+
+        try:
+            choices = self._number_choices(command)
+        except Exception:
+            return
+
+        typed = argument.strip()
+
+        # /inbox supports both opening an item directly and management actions:
+        #   /inbox <number>
+        #   /inbox read|unread|remove <number>
+        if command == "/inbox":
+            parts = argument.split()
+            actions = ("read", "unread", "remove")
+            if len(parts) == 0 or (len(parts) == 1 and not argument.endswith(" ")):
+                token = parts[0].casefold() if parts else ""
+                for action in actions:
+                    if action.startswith(token) and action != token:
+                        yield Completion(action, start_position=-len(token), display=action)
+                if not token or token.isdigit():
+                    for number, label in choices:
+                        value = str(number)
+                        if value.startswith(token) and value != token:
+                            yield Completion(value, start_position=-len(token), display=value, display_meta=str(label or ""))
+                        elif not token:
+                            yield Completion(value, start_position=0, display=value, display_meta=str(label or ""))
+                return
+            action = parts[0].casefold() if parts else ""
+            if action not in actions:
+                return
+            token = parts[1] if len(parts) > 1 else ""
+            if token and not token.isdigit():
+                return
+            for number, label in choices:
+                value = str(number)
+                if value.startswith(token) and value != token:
+                    yield Completion(value, start_position=-len(token), display=value, display_meta=str(label or ""))
+                elif not token:
+                    yield Completion(value, start_position=0, display=value, display_meta=str(label or ""))
+            return
+
+        # /tasks uses a single command namespace:
+        #   /tasks
+        #   /tasks run|remove|enable|disable <number>
+        if command == "/tasks":
+            parts = argument.split()
+            actions = ("run", "remove", "enable", "disable")
+            if len(parts) == 0 or (len(parts) == 1 and not argument.endswith(" ")):
+                token = parts[0].casefold() if parts else ""
+                for action in actions:
+                    if action.startswith(token) and action != token:
+                        yield Completion(action, start_position=-len(token), display=action)
+                return
+            action = parts[0].casefold() if parts else ""
+            if action not in actions:
+                return
+            token = parts[1] if len(parts) > 1 else ""
+            if token and not token.isdigit():
+                return
+            for number, label in choices:
+                value = str(number)
+                if value.startswith(token) and value != token:
+                    yield Completion(value, start_position=-len(token), display=value, display_meta=str(label or ""))
+                elif not token:
+                    yield Completion(value, start_position=0, display=value, display_meta=str(label or ""))
+            return
+
+        if command not in {"/notes", "/memory"} and typed and not typed.isdigit():
+            return
+
+        needle = typed.casefold()
+        for number, label in choices:
+            value = str(number)
+            label_text = str(label or "")
+
+            if command in {"/notes", "/memory"}:
+                if needle and needle not in label_text.casefold():
+                    continue
+                start_pos = -len(argument) if argument else 0
+                yield Completion(
+                    label_text,
+                    start_position=start_pos,
+                    display=label_text,
+                )
+                continue
+
+            if value.startswith(typed) and value != typed:
+                yield Completion(
+                    value,
+                    start_position=-len(typed),
+                    display=value,
+                    display_meta=label_text,
+                )
+            elif not typed:
+                yield Completion(
+                    value,
+                    start_position=0,
+                    display=value,
+                    display_meta=label_text,
+                )
+
+    @staticmethod
+    def _number_choices(command):
+        global _NOTE_INDEX_MAP, _MEMORY_INDEX_MAP, _TASK_INDEX_MAP, _NOTIFICATION_INDEX_MAP
+
+        if command == "/notes":
+            items = api("GET", "/notes?limit=200").get("notes", [])
+            return [(_note_db_id(item), item.get("title", "Untitled")) for item in items if item.get("id") is not None]
+
+        if command == "/memory":
+            items = api("GET", "/memory").get("memories", [])
+            _MEMORY_INDEX_MAP = {str(item.get("id")): item.get("id") for item in items if item.get("id") is not None}
+            return [
+                (str(item.get("id")), f"{item.get('category', 'unknown')}: {str(item.get('text', '')).replace(chr(10), ' ')[:70]}")
+                for item in items if item.get("id") is not None
+            ]
+
+        if command == "/inbox":
+            items = api("GET", "/notifications?unread=false&limit=50").get("notifications", [])
+            _NOTIFICATION_INDEX_MAP = {i: item.get("id") for i, item in enumerate(items, 1)}
+            return [(i, item.get("title", "Notification")) for i, item in enumerate(items, 1)]
+
+        items = api("GET", "/tasks").get("tasks", [])
+        _TASK_INDEX_MAP = {i: item.get("id") for i, item in enumerate(items, 1)}
+        return [(i, item.get("name", "Untitled")) for i, item in enumerate(items, 1)]
+
+
+def api(method, path, payload=None):
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        BASE_URL + path,
+        data=data,
+        headers=headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except Exception:
+            detail = body
+        raise RuntimeError(f"Server error {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            "Cannot connect to Agent Server at 127.0.0.1:8765. "
+            "Check: sudo systemctl status agent-server"
+        ) from exc
+
+
+def api_stream_chat(message, stateless=False):
+    payload = json.dumps({"message": message, "stateless": stateless}).encode("utf-8")
+    request = urllib.request.Request(
+        BASE_URL + "/chat/stream",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=600) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+                event = json.loads(line)
+                event_type = event.get("type")
+                if event_type == "status":
+                    console.print(event.get("message", ""))
+                elif event_type == "final":
+                    return event
+                elif event_type == "error":
+                    raise RuntimeError(event.get("error", "Unknown server error"))
+        raise RuntimeError("Server stream ended without a final response")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except Exception:
+            detail = body
+        raise RuntimeError(f"Server error {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            "Cannot connect to Agent Server at 127.0.0.1:8765. "
+            "Check: sudo systemctl status agent-server"
+        ) from exc
+
+
+def clean_citations(text):
+    if not text:
+        return text
+    text = re.sub(r"cite.*?", "", text)
+    text = re.sub(r"【turn[^】]+】", "", text)
+    text = re.sub(r"[ \t]+([.,;:!?])", r"\1", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def show_help():
+    rows = [
+        ("Knowledge", None),
+        ("/memory", "List memories"),
+        ("/memory <query|number>", "Search or open a memory"),
+        ("/notes", "List notes"),
+        ("/notes <query|number>", "Search or open a note"),
+        ("/history", "Show chat history"),
+        ("Inbox", None),
+        ("/inbox", "List inbox"),
+        ("/inbox <number>", "Open entry"),
+        ("/inbox read <number>", "Mark read"),
+        ("/inbox unread <number>", "Mark unread"),
+        ("/inbox remove <number>", "Remove entry"),
+        ("Tasks", None),
+        ("/tasks", "List tasks"),
+        ("/tasks run <number>", "Run task"),
+        ("/tasks enable <number>", "Enable task"),
+        ("/tasks disable <number>", "Disable task"),
+        ("/tasks remove <number>", "Remove task"),
+        ("Session", None),
+        ("/stateless", "Toggle stateless mode"),
+        ("/clear", "Clear chat history"),
+        ("Info", None),
+        ("/status", "Agent status"),
+        ("/usage", "Usage counters"),
+        ("/rules", "Behavior rules"),
+        ("/help", "Show this help"),
+        ("Exit", None),
+        ("/exit", "Exit"),
+        ("/quit", "Exit"),
+    ]
+    console.print("[bold]Agent commands[/bold]")
+    for command, description in rows:
+        if description is None:
+            console.print(f"[bold cyan]{command}[/bold cyan]")
+        else:
+            console.print(Text.assemble((f"  {command:<26}", "magenta"), description))
+    console.print("[dim]Tab completes commands and available items. Server keeps running after exit.[/dim]")
+
+
+def show_history(stateless=False):
+    result = api("GET", f"/history?limit=20&stateless={str(stateless).lower()}")
+    messages = result.get("messages", [])
+    console.print()
+    if not messages:
+        console.print("[dim]No conversation history.[/dim]")
+    for item in messages:
+        role = "You" if item.get("role") == "user" else "Agent"
+        console.print(f"[bold]{role}:[/bold]")
+        console.print(Markdown(clean_citations(item.get("content", ""))))
+        console.print()
+
+
+def compact_object_id(value, prefix):
+    match = re.fullmatch(rf"{re.escape(prefix)}_0*(\d+)", str(value or ""))
+    return str(int(match.group(1))) if match else str(value or "?")
+
+
+def show_memory(query=None):
+    global _MEMORY_INDEX_MAP
+
+    memories = api("GET", "/memory").get("memories", [])
+    _MEMORY_INDEX_MAP = {str(m.get("id")): m.get("id") for m in memories if m.get("id") is not None}
+
+    # A literal memory ID (for example mem_003) opens that exact JSON entry.
+    if query and str(query).strip() in _MEMORY_INDEX_MAP:
+        memory_id = str(query).strip()
+        match = next((m for m in memories if str(m.get("id")) == memory_id), None)
+        console.print()
+        if not match:
+            console.print("[dim]Memory not found.[/dim]\n")
+            return
+        console.print(Text.assemble((f"[{memory_id}] ", "bold magenta"), (f"({match.get('category','unknown')})", "cyan")))
+        console.print(match.get("text", ""))
+        console.print()
+        return
+
+    if query:
+        path = "/memory/search?q=" + urllib.parse.quote(query) + "&limit=5"
+        result = api("GET", path)
+        results = result.get("memories", [])
+        console.print()
+        if not results:
+            console.print("[dim]No matching memories.[/dim]\n")
+            return
+        console.print(f"[bold]Memories matching:[/bold] {query}")
+        for m in results:
+            memory_id = str(m.get("id", "?"))
+            score = m.get("similarity")
+            suffix = f" [dim]({score:.4f})[/dim]" if isinstance(score, (int, float)) else ""
+            console.print(Text.assemble((f"[{memory_id}] ", "bold magenta"), (f"({m.get('category','unknown')})", "cyan"), Text.from_markup(suffix)))
+            console.print(m.get("text", ""))
+            console.print()
+        return
+
+    console.print()
+    if not memories:
+        console.print("[dim]No persistent memories saved.[/dim]\n")
+        return
+    for m in memories:
+        memory_id = str(m.get("id", "?"))
+        console.print(Text.assemble((f"[{memory_id}] ", "bold magenta"), (f"({m.get('category','unknown')})", "cyan")))
+        console.print(m.get("text", ""))
+        console.print()
+
+def _note_db_id(note):
+    """Return the real SQLite notes.id, never a list/display position."""
+    db_id = note.get("db_id")
+    if db_id is not None:
+        return str(db_id)
+    # Backward compatibility with an older server that only exposes note_000123.
+    value = str(note.get("id", "?")).strip()
+    if value.startswith("note_"):
+        suffix = value[5:]
+        if suffix.isdigit():
+            return str(int(suffix))
+    return value
+
+
+def show_notes(query=None):
+    global _NOTE_INDEX_MAP
+
+    all_notes = api("GET", "/notes?limit=200").get("notes", [])
+
+    if query and str(query).strip().isdigit():
+        show_note(str(query).strip())
+        return
+
+    if query:
+        path = "/notes/search?q=" + urllib.parse.quote(query) + "&limit=10"
+        notes = api("GET", path).get("notes", [])
+        console.print()
+        if not notes:
+            console.print("[dim]No matching notes.[/dim]\n")
+            return
+        console.print(f"[bold]Notes matching:[/bold] {query}")
+        for note in notes:
+            note_id = _note_db_id(note)
+            score = note.get("similarity")
+            suffix = f" [dim]({score:.4f})[/dim]" if isinstance(score, (int, float)) else ""
+            path_text = note.get("category_path") or "Uncategorized"
+            console.print(Text.assemble((f"[{note_id}] ", "bold magenta"), note.get("title", "Untitled"), Text.from_markup(suffix)))
+            console.print(f"    [dim]{path_text}[/dim]")
+        console.print()
+        return
+
+    categories = api("GET", "/note-categories").get("categories", [])
+    console.print()
+    if not all_notes:
+        console.print("[dim]No notes saved.[/dim]\n")
+        return
+    console.print(f"[bold]Notes ({len(all_notes)})[/bold]")
+    notes_by_category = {}
+    for note in all_notes:
+        notes_by_category.setdefault(note.get("category_id"), []).append(note)
+    children = {}
+    category_by_id = {c.get("id"): c for c in categories}
+    for cat in categories:
+        children.setdefault(cat.get("parent_id"), []).append(cat)
+
+    def print_branch(parent_id=None, depth=0):
+        for cat in children.get(parent_id, []):
+            indent = "    " * depth
+            console.print(f"{indent}[bold]{cat.get('name','Untitled')}/[/bold]")
+            for note in notes_by_category.get(cat.get("id"), []):
+                note_id = _note_db_id(note)
+                console.print(Text.assemble(indent + "    ", (f"[{note_id}] ", "bold magenta"), note.get("title", "Untitled")))
+            print_branch(cat.get("id"), depth + 1)
+
+    print_branch(None, 0)
+    uncategorized = notes_by_category.get(None, [])
+    if uncategorized:
+        console.print("[bold]Uncategorized/[/bold]")
+        for note in uncategorized:
+            note_id = _note_db_id(note)
+            console.print(Text.assemble("    ", (f"[{note_id}] ", "bold magenta"), note.get("title", "Untitled")))
+    console.print()
+
+
+def show_note(note_id):
+    note_id = str(note_id).strip()
+    if not note_id:
+        console.print("\n[yellow]Note ID is required.[/yellow]\n")
+        return
+
+    note = api("GET", "/notes/" + urllib.parse.quote(note_id)).get("note")
+    console.print()
+    if not note:
+        console.print("[dim]Note not found.[/dim]\n")
+        return
+    console.print(Text.assemble((f"[{_note_db_id(note)}] ", "bold magenta"), (note.get("title", "Untitled"), "bold")))
+    if note.get("category_path"):
+        console.print(f"[cyan]Category:[/cyan] {note.get('category_path')}")
+    tags = note.get("tags") or []
+    if tags:
+        console.print(f"[cyan]Tags:[/cyan] {', '.join(map(str, tags))}")
+    console.print()
+    console.print(Markdown(note.get("content", "")))
+    console.print()
+
+
+def show_rules():
+    result = api("GET", "/rules")
+    rules = result.get("rules", [])
+    console.print()
+    if not rules:
+        console.print("[dim]No persistent agent rules.[/dim]\n")
+        return
+    console.print("[bold]Agent Rules[/bold]")
+    for rule in rules:
+        console.print(f"[bold]{rule.get('id','?')}[/bold] [cyan]({rule.get('scope','general')})[/cyan]")
+        console.print(rule.get("instruction", ""))
+        console.print()
+
+
+def handle_rule_approval(proposal):
+    if not proposal:
+        return
+    action = proposal.get("action", "change")
+    console.print("\n[bold yellow]⚙ Proposed rule change[/bold yellow]")
+    if action == "delete":
+        old = proposal.get("old_rule") or {}
+        console.print(f"Delete [bold]{old.get('id', proposal.get('rule_id','?'))}[/bold]:")
+        console.print(old.get("instruction", ""))
+    else:
+        if action == "update":
+            old = proposal.get("old_rule") or {}
+            console.print(f"Rule: [bold]{proposal.get('rule_id','?')}[/bold]")
+            console.print(f"[dim]Old: {old.get('instruction','')}[/dim]")
+            console.print("New:")
+        console.print(proposal.get("instruction", ""))
+    console.print()
+    answer = input("Apply this rule change? [y/N]: ").strip().lower()
+    approved = answer in {"y", "yes"}
+    result = api("POST", "/rules/decision", {"approve": approved})
+    if approved:
+        rule = result.get("rule", {})
+        if action == "delete":
+            console.print(f"[green]✓ Rule deleted: {rule.get('id','?')}[/green]\n")
+        else:
+            console.print(f"[green]✓ Rule saved: {rule.get('id','?')}[/green]\n")
+    else:
+        console.print("[dim]Rule change cancelled.[/dim]\n")
+
+
+def show_tasks():
+    global _TASK_INDEX_MAP
+    tasks = api("GET", "/tasks").get("tasks", [])
+    _TASK_INDEX_MAP = {i: task.get("id") for i, task in enumerate(tasks, 1)}
+    console.print()
+    if not tasks:
+        console.print("[dim]No scheduled tasks.[/dim]\n")
+        return
+    console.print(f"[bold]Scheduled Tasks ({len(tasks)})[/bold]")
+    for index, task in enumerate(tasks, 1):
+        state = "[green]enabled[/green]" if task.get("enabled") else "[dim]disabled[/dim]"
+        if task.get("frequency") == "weekly":
+            schedule = f"{task.get('weekday_name','?')} {task.get('run_time','?')}"
+        else:
+            schedule = f"daily {task.get('run_time','?')}"
+        console.print(f"[bold][{index}] [/bold]{task.get('name','Untitled')} ({schedule}, {state})")
+        console.print(f"  Next: {task.get('next_run_at','?')}")
+        if task.get("last_run_at"):
+            console.print(f"  Last: {task.get('last_run_at')}")
+    console.print()
+
+
+def resolve_task_number(display_number):
+    global _TASK_INDEX_MAP
+    try:
+        display_number = int(str(display_number).strip())
+    except (TypeError, ValueError):
+        return None
+    actual_id = _TASK_INDEX_MAP.get(display_number)
+    if actual_id is None:
+        tasks = api("GET", "/tasks").get("tasks", [])
+        _TASK_INDEX_MAP = {i: task.get("id") for i, task in enumerate(tasks, 1)}
+        actual_id = _TASK_INDEX_MAP.get(display_number)
+    return actual_id
+
+def show_notifications(unread_only=False, display_limit=None):
+    global _NOTIFICATION_INDEX_MAP
+    path = f"/notifications?unread={str(unread_only).lower()}&limit=50"
+    items = api("GET", path).get("notifications", [])
+    _NOTIFICATION_INDEX_MAP = {i: item.get("id") for i, item in enumerate(items, 1)}
+    if not items:
+        return 0
+    console.print()
+    console.print(
+        f"[bold]🔔 {len(items)} unread notification{'s' if len(items) != 1 else ''}[/bold]"
+        if unread_only else f"[bold]Inbox ({len(items)})[/bold]"
+    )
+    console.print()
+    visible_items = items[:display_limit] if display_limit is not None else items
+    for index, item in enumerate(visible_items, 1):
+        title = item.get("title", "Notification")
+        summary = item.get("summary", "")
+        if item.get("read_at") is not None:
+            console.print(f"[dim][{index}] {title}[/dim]")
+            console.print(f"[dim]    {summary}[/dim]")
+        else:
+            console.print(f"[bold][{index}] {title}[/bold]")
+            console.print(f"    {summary}")
+        console.print()
+    if unread_only:
+        if display_limit is not None and len(items) > len(visible_items):
+            console.print(f"[dim]Showing {len(visible_items)} most recent · /inbox for all[/dim]\n")
+        else:
+            console.print("[dim]Use /inbox <number> to read one. Unopened notifications remain unread.[/dim]\n")
+    return len(items)
+
+
+def show_notification(display_number):
+    global _NOTIFICATION_INDEX_MAP
+    try:
+        display_number = int(display_number)
+    except (TypeError, ValueError):
+        console.print("\n[yellow]Notification number must be numeric.[/yellow]\n")
+        return
+
+    if display_number not in _NOTIFICATION_INDEX_MAP:
+        items = api("GET", "/notifications?unread=false&limit=50").get("notifications", [])
+        _NOTIFICATION_INDEX_MAP = {i: item.get("id") for i, item in enumerate(items, 1)}
+
+    actual_id = _NOTIFICATION_INDEX_MAP.get(display_number)
+    if actual_id is None:
+        console.print("\n[dim]Notification not found.[/dim]\n")
+        return
+
+    result = api("GET", f"/notifications/{urllib.parse.quote(str(actual_id))}")
+    item = result.get("notification", {})
+    console.print()
+    console.print(f"[bold][{display_number}] {item.get('title','Notification')}[/bold]")
+    console.print(f"[dim]{item.get('created_at','')}[/dim]\n")
+    console.print(Markdown(clean_citations(item.get("content", ""))))
+    console.print()
+
+
+def resolve_notification_number(display_number):
+    global _NOTIFICATION_INDEX_MAP
+    try:
+        display_number = int(display_number)
+    except (TypeError, ValueError):
+        return None
+    if display_number not in _NOTIFICATION_INDEX_MAP:
+        items = api("GET", "/notifications?unread=false&limit=50").get("notifications", [])
+        _NOTIFICATION_INDEX_MAP = {i: item.get("id") for i, item in enumerate(items, 1)}
+    return _NOTIFICATION_INDEX_MAP.get(display_number)
+
+
+def manage_notification(action, display_number):
+    global _NOTIFICATION_INDEX_MAP
+    actual_id = resolve_notification_number(display_number)
+    if actual_id is None:
+        console.print("\n[dim]Notification not found.[/dim]\n")
+        return
+    if action == "read":
+        api("POST", "/notifications/read", {"ids": [actual_id]})
+        console.print(f"\n[green]✓ Inbox entry {display_number} marked read.[/green]\n")
+    elif action == "unread":
+        api("POST", "/notifications/unread", {"ids": [actual_id]})
+        console.print(f"\n[green]✓ Inbox entry {display_number} marked unread.[/green]\n")
+    elif action == "remove":
+        api("DELETE", f"/notifications/{urllib.parse.quote(str(actual_id))}")
+        _NOTIFICATION_INDEX_MAP = {}
+        console.print(f"\n[green]✓ Inbox entry {display_number} removed.[/green]\n")
+
+
+def run_task_now(task_number):
+    task_id = resolve_task_number(task_number)
+    if task_id is None:
+        console.print("\n[dim]Task not found.[/dim]\n")
+        return
+    console.print(f"\n[cyan]⏰ Running task {task_number} now...[/cyan]")
+    result = api("POST", f"/tasks/{urllib.parse.quote(str(task_id))}/run")
+    if result.get("notification_created"):
+        count = int(result.get("notifications_created", 1) or 1)
+        noun = "notification" if count == 1 else "notifications"
+        console.print(f"[green]✓ Task completed and {count} {noun} saved.[/green]\n")
+    else:
+        console.print("[dim]Task completed; there was nothing meaningful to notify.[/dim]\n")
+
+
+def set_task_enabled(task_number, enabled):
+    task_id = resolve_task_number(task_number)
+    if task_id is None:
+        console.print("\n[dim]Task not found.[/dim]\n")
+        return
+    result = api("PUT", f"/tasks/{urllib.parse.quote(str(task_id))}/enabled", {"enabled": enabled})
+    state = "enabled" if enabled else "disabled"
+    console.print(f"\n[green]✓ Task {task_number} {state}.[/green]\n")
+
+
+def delete_task(task_number):
+    task_id = resolve_task_number(task_number)
+    if task_id is None:
+        console.print("\n[dim]Task not found.[/dim]\n")
+        return
+    api("DELETE", f"/tasks/{urllib.parse.quote(str(task_id))}")
+    console.print(f"\n[green]✓ Task {task_number} deleted.[/green]\n")
+
+
+def show_usage(stateless=False):
+    u = api("GET", f"/usage?stateless={str(stateless).lower()}").get("usage", {})
+    console.print()
+    console.print("[bold]Stateless Usage[/bold]" if stateless else "[bold]Server Usage[/bold]")
+    console.print(f"API requests:   {u.get('api_requests', 0):,}")
+    console.print(f"Web searches:   {u.get('web_searches', 0):,}")
+    input_tokens = u.get('input_tokens', 0)
+    cached_input = u.get('cached_input_tokens', 0)
+    uncached_input = max(0, input_tokens - cached_input)
+    console.print(f"Input tokens:   {input_tokens:,}")
+    console.print(f"Cached input:   {cached_input:,}")
+    console.print(f"Uncached input: {uncached_input:,}")
+    console.print(f"Output tokens:  {u.get('output_tokens', 0):,}")
+    console.print(f"Total tokens:   {u.get('total_tokens', 0):,}")
+    estimated_cost = float(u.get("estimated_cost_usd", 0) or 0)
+    console.print(f"Estimated cost: ${estimated_cost:.4f}\n")
+
+
+def show_status(initial=False):
+    s = api("GET", "/status")
+    if initial:
+        console.print("🧠 Agent ready")
+        console.print(f"💬 History: {s.get('history_messages',0)} messages")
+        console.print()
+        console.print("Type /help for commands.\n")
+        return
+
+    # /status is meant to be a quick operational snapshot, not a dump of
+    # implementation details. Fetch the local collections so the numbers are
+    # immediately useful to the user.
+    memories = api("GET", "/memory").get("memories", [])
+    notes = api("GET", "/notes?limit=200").get("notes", [])
+    tasks = api("GET", "/tasks").get("tasks", [])
+    unread = api("GET", "/notifications?unread=true&limit=50").get("notifications", [])
+
+    enabled_tasks = sum(1 for task in tasks if task.get("enabled"))
+    conversation = "active" if s.get("conversation_active", False) else "new"
+
+    console.print()
+    console.print("[bold]Agent Status[/bold]")
+    console.print("🟢 Server: [green]online[/green]")
+    console.print(
+        f"💬 Conversation: {conversation} · "
+        f"{s.get('history_messages', 0)} history messages"
+    )
+    console.print(f"🧠 Memories: {len(memories)}")
+    console.print(f"📝 Notes: {len(notes)}")
+    console.print(f"🔔 Inbox: {len(unread)} unread")
+    console.print(f"📅 Tasks: {enabled_tasks} enabled · {len(tasks)} total")
+    console.print()
+
+
+def main():
+    try:
+        show_status(initial=True)
+        show_notifications(unread_only=True, display_limit=3)
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        return 1
+
+    stateless = False
+    bindings = KeyBindings()
+
+    @bindings.add("enter")
+    def _(event):
+        buffer = event.current_buffer
+
+        # If a /notes or /memory item was explicitly selected from the
+        # completion menu, submit its real ID instead of treating the visible
+        # label as a semantic-search query. Manually typed text is untouched.
+        state = buffer.complete_state
+        completion = state.current_completion if state is not None else None
+        if completion is not None:
+            text = buffer.text
+            before_cursor = text[:buffer.cursor_position]
+            slash_index = before_cursor.rfind("/")
+            fragment = before_cursor[slash_index:] if slash_index >= 0 else ""
+            command, sep, argument = fragment.partition(" ")
+            command_lower = command.lower()
+            if sep and command_lower in {"/notes", "/memory"}:
+                selected_label = completion.text
+                try:
+                    choices = AgentCompleter._number_choices(command_lower)
+                    selected_id = next(
+                        (str(item_id) for item_id, label in choices
+                         if str(label or "") == selected_label),
+                        None,
+                    )
+                except Exception:
+                    selected_id = None
+
+                if selected_id is not None:
+                    replacement = f"{command} {selected_id}"
+                    new_before = before_cursor[:slash_index] + replacement
+                    buffer.text = new_before + text[buffer.cursor_position:]
+                    buffer.cursor_position = len(new_before)
+
+        buffer.validate_and_handle()
+
+    session = PromptSession(
+        multiline=True,
+        key_bindings=bindings,
+        completer=AgentCompleter(),
+        complete_while_typing=False,
+    )
+
+    first_prompt = True
+    while True:
+        if not first_prompt:
+            console.rule(style="dim")
+            console.print()
+        first_prompt = False
+
+        try:
+            message = session.prompt("(stateless) >>> " if stateless else ">>> ").strip()
+        except KeyboardInterrupt:
+            console.print("\nGoodbye.")
+            break
+        except EOFError:
+            console.print("\nGoodbye.")
+            break
+
+        if not message:
+            continue
+        lowered = message.lower()
+
+        if lowered in {"exit", "quit"}:
+            if stateless:
+                api("DELETE", "/stateless")
+                stateless = False
+                console.print()
+                continue
+            console.print("Goodbye.")
+            break
+
+        if lowered == "/stateless":
+            if not stateless:
+                api("POST", "/stateless/start")
+                stateless = True
+                console.print("\n[dim]Stateless mode. Use /exit or /quit to return.[/dim]\n")
+            continue
+
+        if lowered in {"/exit", "/quit"}:
+            if stateless:
+                api("DELETE", "/stateless")
+                stateless = False
+                console.print()
+                continue
+            console.print("Goodbye.")
+            break
+
+        try:
+            if lowered == "/help":
+                show_help(); continue
+            if lowered == "/clear":
+                api("DELETE", f"/conversation?stateless={str(stateless).lower()}")
+                console.print("\n💬 History: 0 messages\n")
+                continue
+            if lowered == "/history":
+                show_history(stateless=stateless); continue
+            if lowered == "/memory":
+                show_memory(); continue
+            if lowered.startswith("/memory "):
+                query = message[8:].strip()
+                if not query:
+                    show_memory()
+                else:
+                    show_memory(query)
+                continue
+            if lowered == "/notes":
+                show_notes(); continue
+            if lowered.startswith("/notes "):
+                query = message[7:].strip()
+                if not query:
+                    show_notes()
+                else:
+                    show_notes(query)
+                continue
+            if lowered == "/usage":
+                show_usage(stateless=stateless); continue
+            if lowered == "/rules":
+                show_rules(); continue
+            if lowered == "/tasks":
+                show_tasks(); continue
+            if lowered.startswith("/tasks "):
+                task_args = message.split()[1:]
+                if len(task_args) == 2 and task_args[1].isdigit():
+                    action, number = task_args[0].lower(), task_args[1]
+                    if action == "run":
+                        run_task_now(number)
+                    elif action == "remove":
+                        delete_task(number)
+                    elif action == "disable":
+                        set_task_enabled(number, False)
+                    elif action == "enable":
+                        set_task_enabled(number, True)
+                    else:
+                        console.print("\n[yellow]Usage:[/yellow] /tasks | /tasks run <number> | /tasks remove <number> | /tasks disable <number> | /tasks enable <number>\n")
+                else:
+                    console.print("\n[yellow]Usage:[/yellow] /tasks | /tasks run <number> | /tasks remove <number> | /tasks disable <number> | /tasks enable <number>\n")
+                continue
+            if lowered == "/inbox":
+                show_notifications(unread_only=False); continue
+            if lowered.startswith("/inbox "):
+                inbox_args = message.split()[1:]
+                if len(inbox_args) == 1 and inbox_args[0].isdigit():
+                    show_notification(inbox_args[0])
+                elif len(inbox_args) == 2 and inbox_args[0].lower() in {"read", "unread", "remove"} and inbox_args[1].isdigit():
+                    manage_notification(inbox_args[0].lower(), inbox_args[1])
+                else:
+                    console.print("\n[yellow]Usage:[/yellow] /inbox <number> | /inbox read <number> | /inbox unread <number> | /inbox remove <number>\n")
+                continue
+            if lowered == "/status":
+                show_status(); continue
+            if message.startswith("/"):
+                console.print(f"\n[yellow]Unknown command:[/yellow] {message}")
+                console.print("Type [bold]/help[/bold] to see available commands.\n")
+                continue
+
+            console.print()
+            result = api_stream_chat(message, stateless=stateless)
+            console.print()
+            console.print(Markdown(clean_citations(result.get("answer", ""))))
+            console.print()
+
+            timing = result.get("timing") or {}
+            local_s = float(timing.get("local_seconds", 0) or 0)
+            openai_s = float(timing.get("openai_seconds", 0) or 0)
+            total_s = float(timing.get("total_seconds", 0) or 0)
+            calls = int(timing.get("openai_calls", 0) or 0)
+            searches = int(timing.get("web_searches", 0) or 0)
+
+            console.print(
+                f"[dim]⏱ Local: {local_s:.2f}s · "
+                f"⏱ OpenAI: {openai_s:.2f}s "
+                f"({calls} {'call' if calls == 1 else 'calls'}, "
+                f"{searches} {'search' if searches == 1 else 'searches'}) · "
+                f"Total: {total_s:.2f}s[/dim]"
+            )
+            console.print()
+            handle_rule_approval(result.get("pending_rule"))
+
+        except Exception as exc:
+            console.print(f"\n[bold red]Error:[/bold red] {exc}\n")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
