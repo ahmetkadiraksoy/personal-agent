@@ -31,13 +31,15 @@ are intentionally kept outside version control.
 
 ## Requirements
 
--   Python 3
+-   Python 3.12 (tested and recommended)
 -   An OpenAI API key
 -   Internet access for OpenAI API and web-search functionality
 -   Google Calendar credentials if Calendar integration is used
 -   Git, if cloning the repository
 
 Python dependencies are listed in `requirements.txt`.
+
+> **Python version:** Python 3.12 is the tested and recommended version for this project. You can keep newer Python versions installed on your computer; create this project's `.venv` with Python 3.12. Python 3.13 or 3.14 may encounter compatibility problems with pinned machine-learning dependencies such as NumPy, PyTorch, or Sentence Transformers.
 
 ------------------------------------------------------------------------
 
@@ -52,7 +54,7 @@ If Python 3 and Git are already installed, you can skip this step.
 Using Homebrew:
 
 ``` bash
-brew install python git
+brew install python@3.12 git
 ```
 
 If Homebrew is not installed, Python can instead be installed from the
@@ -61,7 +63,7 @@ official Python distribution.
 Verify:
 
 ``` bash
-python3 --version
+/opt/homebrew/bin/python3.12 --version
 git --version
 ```
 
@@ -79,8 +81,9 @@ Alternatively, download the repository from GitHub and extract it.
 ### 3. Create a virtual environment
 
 ``` bash
-python3 -m venv .venv
+/opt/homebrew/bin/python3.12 -m venv .venv
 source .venv/bin/activate
+python --version
 ```
 
 ### 4. Install dependencies
@@ -94,21 +97,23 @@ python -m pip install -r requirements.txt
 
 The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
 
-First, create a file named `.env` in the same directory as `agent` and `agent-server`.
+The repository includes `.env.example`, a safe configuration template with no secrets. Copy it to `.env` so the template remains available while `.env` stores your machine-specific private configuration.
 
 On **macOS or Linux**:
 
 ```bash
+cp .env.example .env
 nano .env
 ```
 
-On **Windows**, you can create the file with Notepad:
+On **Windows PowerShell**:
 
 ```powershell
+Copy-Item .env.example .env
 notepad .env
 ```
 
-Add the following line:
+Then set your OpenAI API key in `.env`:
 
 ```dotenv
 OPENAI_API_KEY=your_openai_api_key_here
@@ -318,13 +323,13 @@ These instructions assume a Debian/Ubuntu/Raspberry Pi OS-based system.
 
 ``` bash
 sudo apt update
-sudo apt install python3 python3-venv python3-pip git
+sudo apt install python3.12 python3.12-venv python3-pip git
 ```
 
 Verify:
 
 ``` bash
-python3 --version
+python3.12 --version
 git --version
 ```
 
@@ -340,8 +345,9 @@ Or download and extract the repository manually.
 ### 3. Create a virtual environment
 
 ``` bash
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+python --version
 ```
 
 ### 4. Install dependencies
@@ -359,21 +365,23 @@ computer.
 
 The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
 
-First, create a file named `.env` in the same directory as `agent` and `agent-server`.
+The repository includes `.env.example`, a safe configuration template with no secrets. Copy it to `.env` so the template remains available while `.env` stores your machine-specific private configuration.
 
 On **macOS or Linux**:
 
 ```bash
+cp .env.example .env
 nano .env
 ```
 
-On **Windows**, you can create the file with Notepad:
+On **Windows PowerShell**:
 
 ```powershell
+Copy-Item .env.example .env
 notepad .env
 ```
 
-Add the following line:
+Then set your OpenAI API key in `.env`:
 
 ```dotenv
 OPENAI_API_KEY=your_openai_api_key_here
@@ -572,14 +580,14 @@ PowerShell is recommended.
 
 ### 1. Install Python and Git
 
-Install Python 3 and Git for Windows.
+Install Python 3.12 and Git for Windows. You may keep newer Python versions installed alongside Python 3.12.
 
 During Python installation, enable the option to add Python to `PATH`.
 
 Verify in PowerShell:
 
 ``` powershell
-python --version
+py -3.12 --version
 git --version
 ```
 
@@ -600,22 +608,22 @@ Alternatively, download the repository ZIP from GitHub and extract it.
 
 ### 3. Create a virtual environment
 
-Using Python:
+Create the virtual environment explicitly with Python 3.12:
 
 ``` powershell
-python -m venv .venv
-```
-
-Or:
-
-``` powershell
-py -m venv .venv
+py -3.12 -m venv .venv
 ```
 
 Activate it:
 
 ``` powershell
 .\.venv\Scripts\Activate.ps1
+```
+
+Verify that the virtual environment is using Python 3.12:
+
+```powershell
+python --version
 ```
 
 If PowerShell prevents activation because of its execution policy, the
@@ -634,21 +642,23 @@ python -m pip install -r requirements.txt
 
 The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
 
-First, create a file named `.env` in the same directory as `agent` and `agent-server`.
+The repository includes `.env.example`, a safe configuration template with no secrets. Copy it to `.env` so the template remains available while `.env` stores your machine-specific private configuration.
 
 On **macOS or Linux**:
 
 ```bash
+cp .env.example .env
 nano .env
 ```
 
-On **Windows**, you can create the file with Notepad:
+On **Windows PowerShell**:
 
 ```powershell
+Copy-Item .env.example .env
 notepad .env
 ```
 
-Add the following line:
+Then set your OpenAI API key in `.env`:
 
 ```dotenv
 OPENAI_API_KEY=your_openai_api_key_here
