@@ -93,6 +93,19 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+### Download the local embedding model
+
+The agent uses the local `intfloat/multilingual-e5-base` Sentence Transformers model for semantic memory and note retrieval. The model is approximately 500 MB and is downloaded only once; afterward it is loaded from the local Hugging Face cache.
+
+Download and cache it during installation:
+
+```bash
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-base')"
+```
+
+This keeps the first `agent-server` startup from unexpectedly downloading the model. The embedding model runs locally on your computer; do not add the downloaded model files to the GitHub repository.
+
+
 ### 5. Configure the environment
 
 The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
@@ -105,29 +118,6 @@ On **macOS or Linux**:
 cp .env.example .env
 nano .env
 ```
-
-On **Windows PowerShell**:
-
-```powershell
-Copy-Item .env.example .env
-notepad .env
-```
-
-Then set your OpenAI API key in `.env`:
-
-```dotenv
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-Replace `your_openai_api_key_here` with your actual OpenAI API key. For example:
-
-```dotenv
-OPENAI_API_KEY=sk-example123
-```
-
-Do not put quotation marks around the key unless your value specifically requires them.
-
-If you do not already have an OpenAI API key, create one through the OpenAI API platform. An API key is separate from a ChatGPT subscription; API usage is billed through the OpenAI API account.
 
 After saving the file, your project directory should look approximately like:
 
@@ -356,6 +346,19 @@ python --version
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+### Download the local embedding model
+
+The agent uses the local `intfloat/multilingual-e5-base` Sentence Transformers model for semantic memory and note retrieval. The model is approximately 500 MB and is downloaded only once; afterward it is loaded from the local Hugging Face cache.
+
+Download and cache it during installation:
+
+```bash
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-base')"
+```
+
+This keeps the first `agent-server` startup from unexpectedly downloading the model. The embedding model runs locally on your computer; do not add the downloaded model files to the GitHub repository.
+
 
 On a Raspberry Pi, packages related to PyTorch, Transformers, and
 Sentence Transformers may take longer to install than on a desktop
@@ -637,6 +640,19 @@ according to the organization's security requirements.
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+### Download the local embedding model
+
+The agent uses the local `intfloat/multilingual-e5-base` Sentence Transformers model for semantic memory and note retrieval. The model is approximately 500 MB and is downloaded only once; afterward it is loaded from the local Hugging Face cache.
+
+Download and cache it during installation:
+
+```bash
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-base')"
+```
+
+This keeps the first `agent-server` startup from unexpectedly downloading the model. The embedding model runs locally on your computer; do not add the downloaded model files to the GitHub repository.
+
 
 ### 5. Configure the environment
 
