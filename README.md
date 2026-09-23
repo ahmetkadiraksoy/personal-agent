@@ -70,7 +70,7 @@ git --version
 Using Git:
 
 ``` bash
-git clone <YOUR-REPOSITORY-URL>
+git clone https://github.com/ahmetkadiraksoy/personal-agent.git
 cd personal-agent
 ```
 
@@ -277,7 +277,7 @@ git --version
 ### 2. Get the project
 
 ``` bash
-git clone <YOUR-REPOSITORY-URL>
+git clone https://github.com/ahmetkadiraksoy/personal-agent.git
 cd personal-agent
 ```
 
@@ -484,7 +484,7 @@ py --version
 ### 2. Get the project
 
 ``` powershell
-git clone <YOUR-REPOSITORY-URL>
+git clone https://github.com/ahmetkadiraksoy/personal-agent.git
 cd personal-agent
 ```
 
