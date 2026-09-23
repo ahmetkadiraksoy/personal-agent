@@ -1149,4 +1149,4 @@ If you authorized Google Calendar, deleting the local Google token removes the a
 
 # License
 
-No open-source license is currently specified. If this repository is made public for others to reuse, modify, or redistribute, add an appropriate license such as the MIT License.
+This project is licensed under the [MIT License](LICENSE).
