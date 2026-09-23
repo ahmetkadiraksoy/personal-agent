@@ -123,9 +123,9 @@ source .venv/bin/activate
 
 ------------------------------------------------------------------------
 
-## Run the server automatically with launchd
+## Optional: Run the server automatically with launchd
 
-On macOS, the equivalent of a Linux `systemd` service is a `launchd` LaunchAgent. This keeps the backend running in the background and can start it automatically when you log in.
+This step is optional. On macOS, the equivalent of a Linux `systemd` service is a `launchd` LaunchAgent. This keeps the backend running in the background and can start it automatically when you log in.
 
 First determine your project path:
 
@@ -329,9 +329,9 @@ source .venv/bin/activate
 ./agent
 ```
 
-## Run the server automatically with systemd
+## Optional: Run the server automatically with systemd
 
-On Linux and Raspberry Pi OS, the backend can run continuously as a `systemd` service. This means it can start automatically at boot and you do not need to leave a terminal open.
+This step is optional. On Linux and Raspberry Pi OS, the backend can run continuously as a `systemd` service. This means it can start automatically at boot and you do not need to leave a terminal open.
 
 The following example assumes:
 
@@ -552,9 +552,9 @@ installation.
 
 ------------------------------------------------------------------------
 
-## Run the server automatically with Windows Task Scheduler
+## Optional: Run the server automatically with Windows Task Scheduler
 
-On Windows, Task Scheduler can provide the equivalent behavior: start `agent-server` automatically when you sign in and keep the terminal client separate.
+This step is optional. On Windows, Task Scheduler can provide the equivalent behavior: start `agent-server` automatically when you sign in and keep the terminal client separate.
 
 The example below assumes:
 
