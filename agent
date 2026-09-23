@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,6 +14,8 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 BASE_URL = "http://127.0.0.1:8765"
+SERVER_READY_TIMEOUT = 60
+SERVER_READY_POLL_SECONDS = 1
 console = Console()
 
 _NOTIFICATION_INDEX_MAP = {}
@@ -685,8 +688,37 @@ def show_usage(stateless=False):
     console.print(f"Estimated cost: ${estimated_cost:.4f}\n")
 
 
-def show_status(initial=False):
-    s = api("GET", "/status")
+def wait_for_server(timeout=SERVER_READY_TIMEOUT, poll_seconds=SERVER_READY_POLL_SECONDS):
+    """Wait for the backend to finish startup before continuing the CLI."""
+    deadline = time.monotonic() + timeout
+    waiting_message_shown = False
+
+    while True:
+        try:
+            status = api("GET", "/status")
+            if status.get("status") == "ok":
+                if waiting_message_shown:
+                    console.print("[green]✓[/green] Agent Server ready")
+                    console.print()
+                return status
+        except Exception:
+            pass
+
+        if not waiting_message_shown:
+            console.print("⏳ Waiting for Agent Server...")
+            waiting_message_shown = True
+
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"Agent Server did not become ready within {timeout} seconds. "
+                "Make sure agent-server is running, then try again."
+            )
+
+        time.sleep(poll_seconds)
+
+
+def show_status(initial=False, status_data=None):
+    s = status_data if status_data is not None else api("GET", "/status")
     if initial:
         console.print("🧠 Agent ready")
         console.print(f"💬 History: {s.get('history_messages',0)} messages")
@@ -721,7 +753,8 @@ def show_status(initial=False):
 
 def main():
     try:
-        show_status(initial=True)
+        status_data = wait_for_server()
+        show_status(initial=True, status_data=status_data)
         show_notifications(unread_only=True, display_limit=3)
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -783,24 +816,17 @@ def main():
         try:
             message = session.prompt("(stateless) >>> " if stateless else ">>> ").strip()
         except KeyboardInterrupt:
-            console.print("\nGoodbye.")
-            break
+            # Ctrl+C cancels the current input and returns to a fresh prompt.
+            console.print()
+            continue
         except EOFError:
-            console.print("\nGoodbye.")
-            break
+            # Do not let Ctrl+D terminate the client; exiting is explicit.
+            console.print("\n[dim]Use /exit or /quit to exit.[/dim]\n")
+            continue
 
         if not message:
             continue
         lowered = message.lower()
-
-        if lowered in {"exit", "quit"}:
-            if stateless:
-                api("DELETE", "/stateless")
-                stateless = False
-                console.print()
-                continue
-            console.print("Goodbye.")
-            break
 
         if lowered == "/stateless":
             if not stateless:
@@ -909,6 +935,11 @@ def main():
             console.print()
             handle_rule_approval(result.get("pending_rule"))
 
+        except KeyboardInterrupt:
+            # Ctrl+C during a command/API operation cancels the client-side
+            # wait and returns to the prompt instead of terminating the CLI.
+            console.print("\n[dim]Cancelled.[/dim]\n")
+            continue
         except Exception as exc:
             console.print(f"\n[bold red]Error:[/bold red] {exc}\n")
 
