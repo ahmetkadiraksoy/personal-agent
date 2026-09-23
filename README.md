@@ -1,5 +1,8 @@
 # Personal AI Agent
 
+<p align="center">
+  <img src="assets/personal-agent-banner.png" alt="Personal AI Agent" width="100%">
+</p>
 A terminal-based personal AI agent with persistent memory, notes, inbox
 notifications, scheduled tasks, web search, Google Calendar integration,
 local semantic retrieval, command autocomplete, and API usage tracking.
