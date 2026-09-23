@@ -216,3 +216,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Personal Agent
+# Credentials / authentication
+google_token.json
+credentials.json
+client_secret*.json
+
+# Personal agent data
+memory.json
+notes.db
+rules.json
+
+# Generated embedding indexes
+memory_embeddings.npz
+note_embeddings.npz
+
+# Local/runtime files
+*.bak
+.DS_Store
