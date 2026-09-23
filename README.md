@@ -979,6 +979,112 @@ supported platforms.
 
 ------------------------------------------------------------------------
 
+
+# Uninstall
+
+Before uninstalling, decide whether you want to keep your local agent data. Depending on your configuration, the project directory may contain private files such as:
+
+```text
+.env
+memory.json
+notes.db
+rules.json
+memory_embeddings.npz
+note_embeddings.npz
+google_token.json
+```
+
+Deleting these files may permanently remove your local configuration, memories, notes, and authentication data. Back up anything you want to keep before removing the project.
+
+## macOS
+
+If you configured the optional `launchd` LaunchAgent, unload it first:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+Then remove the LaunchAgent file:
+
+```bash
+rm ~/Library/LaunchAgents/com.personalagent.server.plist
+```
+
+If you did not configure the optional LaunchAgent, these steps are not necessary.
+
+Delete the project directory. For example:
+
+```bash
+rm -rf ~/Documents/agent
+```
+
+Change the path if you installed the project somewhere else.
+
+## Linux / Raspberry Pi OS
+
+If you configured the optional `systemd` service, stop and disable it:
+
+```bash
+sudo systemctl disable --now agent-server
+```
+
+Remove the service definition:
+
+```bash
+sudo rm /etc/systemd/system/agent-server.service
+```
+
+Reload `systemd`:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl reset-failed
+```
+
+If you did not configure the optional `systemd` service, these steps are not necessary.
+
+Delete the project directory. For example:
+
+```bash
+rm -rf ~/Documents/agent
+```
+
+Change the path if you installed the project somewhere else.
+
+## Windows
+
+If you configured the optional scheduled task, stop it if it is currently running:
+
+```powershell
+Stop-ScheduledTask -TaskName "Personal AI Agent Server" -ErrorAction SilentlyContinue
+```
+
+Then remove the task:
+
+```powershell
+Unregister-ScheduledTask -TaskName "Personal AI Agent Server" -Confirm:$false
+```
+
+If you did not configure the optional scheduled task, these steps are not necessary.
+
+Delete the `personal-agent` project directory using File Explorer or PowerShell. For example:
+
+```powershell
+Remove-Item -Recurse -Force "$HOME\Documents\personal-agent"
+```
+
+Change the path if you installed the project somewhere else.
+
+## What does not need to be removed
+
+You generally do **not** need to uninstall Python, Git, or other system-wide development tools. They may be used by other applications.
+
+The Python virtual environment (`.venv`) is stored inside the project directory, so deleting the project directory also removes the Python packages installed specifically for this agent.
+
+If you authorized Google Calendar, deleting the local Google token removes the agent's local authorization data. You can separately revoke the application's access from your Google account if you want to revoke the authorization itself.
+
+---
+
 # License
 
 Private project. No license is currently specified.
