@@ -15,6 +15,25 @@ The terminal client communicates with the local backend over HTTP.
 Personal data, credentials, databases, and generated embedding indexes
 are intentionally kept outside version control.
 
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+  - [macOS](#macos)
+  - [Linux / Raspberry Pi OS](#linux--raspberry-pi-os)
+  - [Windows](#windows)
+- [Configuration](#configuration)
+  - [Google Calendar](#google-calendar)
+- [Commands](#commands)
+- [Private and Generated Files](#private-and-generated-files)
+- [Moving to a New Computer](#moving-to-a-new-computer)
+- [Platform Notes](#platform-notes)
+- [Uninstall](#uninstall)
+- [License](#license)
+
+------------------------------------------------------------------------
+
 ## Features
 
 -   Conversational terminal interface
