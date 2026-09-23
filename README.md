@@ -92,11 +92,65 @@ python -m pip install -r requirements.txt
 
 ### 5. Configure the environment
 
-Create a `.env` file in the project directory and add the configuration
-required by the agent, including your OpenAI API key.
+The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
 
-Do not commit `.env` to GitHub.
+First, create a file named `.env` in the same directory as `agent` and `agent-server`.
 
+On **macOS or Linux**:
+
+```bash
+nano .env
+```
+
+On **Windows**, you can create the file with Notepad:
+
+```powershell
+notepad .env
+```
+
+Add the following line:
+
+```dotenv
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+Replace `your_openai_api_key_here` with your actual OpenAI API key. For example:
+
+```dotenv
+OPENAI_API_KEY=sk-example123
+```
+
+Do not put quotation marks around the key unless your value specifically requires them.
+
+If you do not already have an OpenAI API key, create one through the OpenAI API platform. An API key is separate from a ChatGPT subscription; API usage is billed through the OpenAI API account.
+
+After saving the file, your project directory should look approximately like:
+
+```text
+personal-agent/
+├── agent
+├── agent-server
+├── requirements.txt
+├── README.md
+├── .gitignore
+└── .env
+```
+
+The `.env` file must remain local. **Do not upload or commit it to GitHub.** The repository's `.gitignore` is configured to exclude it.
+
+To verify that the variable is being loaded correctly without displaying the secret itself, activate the project's virtual environment and run:
+
+```bash
+python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
+```
+
+A successful configuration should print:
+
+```text
+OpenAI API key configured: True
+```
+
+You can then start `agent-server` and the `agent` client as described below.
 ### 6. Make the programs executable
 
 If necessary:
@@ -303,11 +357,65 @@ computer.
 
 ### 5. Configure the environment
 
-Create the local `.env` file and provide the required configuration,
-including the OpenAI API key.
+The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
 
-Do not commit `.env` or personal runtime data to GitHub.
+First, create a file named `.env` in the same directory as `agent` and `agent-server`.
 
+On **macOS or Linux**:
+
+```bash
+nano .env
+```
+
+On **Windows**, you can create the file with Notepad:
+
+```powershell
+notepad .env
+```
+
+Add the following line:
+
+```dotenv
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+Replace `your_openai_api_key_here` with your actual OpenAI API key. For example:
+
+```dotenv
+OPENAI_API_KEY=sk-example123
+```
+
+Do not put quotation marks around the key unless your value specifically requires them.
+
+If you do not already have an OpenAI API key, create one through the OpenAI API platform. An API key is separate from a ChatGPT subscription; API usage is billed through the OpenAI API account.
+
+After saving the file, your project directory should look approximately like:
+
+```text
+personal-agent/
+├── agent
+├── agent-server
+├── requirements.txt
+├── README.md
+├── .gitignore
+└── .env
+```
+
+The `.env` file must remain local. **Do not upload or commit it to GitHub.** The repository's `.gitignore` is configured to exclude it.
+
+To verify that the variable is being loaded correctly without displaying the secret itself, activate the project's virtual environment and run:
+
+```bash
+python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
+```
+
+A successful configuration should print:
+
+```text
+OpenAI API key configured: True
+```
+
+You can then start `agent-server` and the `agent` client as described below.
 ### 6. Make the programs executable
 
 ``` bash
@@ -524,11 +632,65 @@ python -m pip install -r requirements.txt
 
 ### 5. Configure the environment
 
-Create a `.env` file in the project directory and provide the required
-configuration, including the OpenAI API key.
+The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
 
-Do not upload this file to GitHub.
+First, create a file named `.env` in the same directory as `agent` and `agent-server`.
 
+On **macOS or Linux**:
+
+```bash
+nano .env
+```
+
+On **Windows**, you can create the file with Notepad:
+
+```powershell
+notepad .env
+```
+
+Add the following line:
+
+```dotenv
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+Replace `your_openai_api_key_here` with your actual OpenAI API key. For example:
+
+```dotenv
+OPENAI_API_KEY=sk-example123
+```
+
+Do not put quotation marks around the key unless your value specifically requires them.
+
+If you do not already have an OpenAI API key, create one through the OpenAI API platform. An API key is separate from a ChatGPT subscription; API usage is billed through the OpenAI API account.
+
+After saving the file, your project directory should look approximately like:
+
+```text
+personal-agent/
+├── agent
+├── agent-server
+├── requirements.txt
+├── README.md
+├── .gitignore
+└── .env
+```
+
+The `.env` file must remain local. **Do not upload or commit it to GitHub.** The repository's `.gitignore` is configured to exclude it.
+
+To verify that the variable is being loaded correctly without displaying the secret itself, activate the project's virtual environment and run:
+
+```bash
+python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
+```
+
+A successful configuration should print:
+
+```text
+OpenAI API key configured: True
+```
+
+You can then start `agent-server` and the `agent` client as described below.
 ### 6. Run the application
 
 The `agent` and `agent-server` files use Unix-style executable behavior,
