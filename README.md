@@ -50,6 +50,9 @@ are intentionally kept outside version control.
 -   Google Calendar integration
 -   Web search
 -   API usage and estimated cost tracking
+-   Bounded tool and web-search execution to limit runaway API usage
+-   Tool authorization for destructive operations and long-term memory writes
+-   Sandboxed workspace filesystem access restricted to `~/PersonalAgent`
 -   Slash-command autocomplete
 -   macOS, Linux, Raspberry Pi OS, and Windows support
 
@@ -567,6 +570,28 @@ Private configuration is stored outside the application directory.
 At minimum, set the OpenAI API credentials expected by `agent-server`. The repository's `.env.example` can be copied to the appropriate configuration directory. The installer does this automatically and can securely prompt for the API key without echoing it to the terminal.
 
 Do not put API keys directly into `agent` or `agent-server`, and do not put secrets in `~/PersonalAgent`.
+
+## Resource and Safety Limits
+
+The server applies conservative execution limits to interactive requests and background scheduled tasks. These limits reduce redundant tool calls, bound web-search activity, prevent failed scheduled jobs from retrying indefinitely, and keep oversized tool results from consuming unnecessary model context.
+
+The defaults can be overridden in the private `.env` configuration when needed:
+
+```dotenv
+INTERACTIVE_MAX_TOOL_ROUNDS=8
+INTERACTIVE_MAX_WEB_SEARCHES=5
+SCHEDULED_TASK_MAX_TOOL_ROUNDS=4
+SCHEDULED_TASK_MAX_WEB_SEARCHES=3
+SCHEDULED_TASK_MAX_ATTEMPTS=1
+SCHEDULED_TASK_PREVIOUS_RESULT_MAX_CHARS=3000
+SCHEDULED_TASK_TIMEOUT_SECONDS=120
+SCHEDULED_TASK_FAILURE_DISABLE_THRESHOLD=3
+TOOL_OUTPUT_MAX_CHARS=12000
+```
+
+When a tool or web-search budget is exhausted, the agent is instructed to finish from the information already collected rather than treating the budget limit itself as an error. Scheduled tasks that fail repeatedly across separate scheduled occurrences are automatically disabled after the configured failure threshold.
+
+These resource controls complement the server's authorization layer. Destructive operations and long-term memory writes require appropriate user intent, and filesystem tools are restricted to the `~/PersonalAgent` workspace boundary.
 
 ## Google Calendar
 

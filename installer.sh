@@ -213,8 +213,8 @@ remove_installation(){
       ;;
     2)
       printf '\n%s%sThis permanently deletes the app, configuration, databases, memory, cache, credentials, and workspace.%s\n' "$BOLD" "$RED" "$RESET"
-      tty_read -r -p "Type REMOVE to continue: " confirm
-      [[ "$confirm" == "REMOVE" ]] || { warn "Removal cancelled."; exit 0; }
+      tty_read -r -p "Type REMOVE EVERYTHING to continue: " confirm
+      [[ "$confirm" == "REMOVE EVERYTHING" ]] || { warn "Removal cancelled."; exit 0; }
       remove_service
       rm -f "$LAUNCHER"
       rm -rf "$APP_DIR" "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$WORKSPACE_DIR" "$LEGACY_STATE_BACKUP"
