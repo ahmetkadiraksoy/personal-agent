@@ -5,7 +5,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -28,7 +28,7 @@ _TASK_INDEX_MAP = {}
 
 COMMANDS = [
     "/stateless", "/clear", "/history", "/memory", "/notes",
-    "/usage", "/status", "/rules", "/tasks", "/inbox",
+    "/usage", "/audit", "/status", "/rules", "/tasks", "/inbox",
     "/help", "/exit", "/quit",
 ]
 
@@ -65,6 +65,14 @@ class AgentCompleter(Completer):
         if command == "/usage":
             typed = argument.strip().lower()
             choices = ("today", "yesterday", "week", "month", "last 7d", "last 30d", "all")
+            for choice in choices:
+                if choice.startswith(typed) and choice != typed:
+                    yield Completion(choice, start_position=-len(argument), display=choice)
+            return
+
+        if command == "/audit":
+            typed = argument.strip().lower()
+            choices = ("today", "denied", "last ")
             for choice in choices:
                 if choice.startswith(typed) and choice != typed:
                     yield Completion(choice, start_position=-len(argument), display=choice)
@@ -140,6 +148,34 @@ class AgentCompleter(Completer):
                 elif not token:
                     yield Completion(value, start_position=0, display=value, display_meta=str(label or ""))
             return
+
+        # /notes remove <number>
+        if command == "/notes":
+            parts = argument.split()
+            if not parts or (len(parts) == 1 and not argument.endswith(" ")):
+                token = parts[0].casefold() if parts else ""
+                action = "remove"
+                if action.startswith(token) and action != token:
+                    yield Completion(action, start_position=-len(token), display=action)
+                if token and not action.startswith(token):
+                    needle = argument.casefold()
+                    for number, label in choices:
+                        label_text = str(label or "")
+                        if needle not in label_text.casefold():
+                            continue
+                        yield Completion(label_text, start_position=-len(argument), display=label_text)
+                return
+            if parts[0].casefold() == "remove":
+                token = parts[1] if len(parts) > 1 else ""
+                if len(parts) > 2 or (token and not token.isdigit()):
+                    return
+                for number, label in choices:
+                    value = str(number)
+                    if value.startswith(token) and value != token:
+                        yield Completion(value, start_position=-len(token), display=value, display_meta=str(label or ""))
+                    elif not token:
+                        yield Completion(value, start_position=0, display=value, display_meta=str(label or ""))
+                return
 
         if command not in {"/notes", "/memory"} and typed and not typed.isdigit():
             return
@@ -279,47 +315,24 @@ def clean_citations(text):
 
 
 def show_help():
-    rows = [
-        ("Knowledge", None),
-        ("/memory", "List memories"),
-        ("/memory <query|number>", "Search or open a memory"),
-        ("/notes", "List notes"),
-        ("/notes <query|number>", "Search or open a note"),
-        ("/history", "Show chat history"),
-        ("Inbox", None),
-        ("/inbox", "List inbox"),
-        ("/inbox <number>", "Open entry"),
-        ("/inbox read <number>", "Mark read"),
-        ("/inbox unread <number>", "Mark unread"),
-        ("/inbox remove <number>", "Remove entry"),
-        ("Tasks", None),
-        ("/tasks", "List tasks"),
-        ("/tasks run <number>", "Run task"),
-        ("/tasks enable <number>", "Enable task"),
-        ("/tasks disable <number>", "Disable task"),
-        ("/tasks remove <number>", "Remove task"),
-        ("Session", None),
-        ("/stateless", "Toggle stateless mode"),
-        ("/clear", "Clear chat history"),
-        ("Info", None),
-        ("/status", "Agent status"),
-        ("/usage", "Current session usage"),
-        ("/usage <period|date range>", "Historical usage"),
-        ("/rules", "Behavior rules"),
-        ("/help", "Show this help"),
-        ("Exit", None),
-        ("/exit", "Exit"),
-        ("/quit", "Exit"),
+    console.print("\n[bold]Commands[/bold]\n")
+    sections = [
+        ("Knowledge", [("/memory","List memories"),("/memory <query|number>","Search or open a memory"),("/notes","List notes"),("/notes <query|number>","Search or open a note"),("/notes remove <number>","Remove a note"),("/history","Show chat history")]),
+        ("Inbox", [("/inbox","List inbox"),("/inbox <number>","Open an entry"),("/inbox read <number>","Mark an entry as read"),("/inbox unread <number>","Mark an entry as unread"),("/inbox remove <number>","Remove an entry")]),
+        ("Tasks", [("/tasks","List tasks"),("/tasks run <number>","Run a task"),("/tasks enable <number>","Enable a task"),("/tasks disable <number>","Disable a task"),("/tasks remove <number>","Remove a task")]),
+        ("Session", [("/stateless","Toggle stateless mode"),("/clear","Clear conversation history")]),
+        ("Usage", [("/usage","Current session"),("/usage today","Today"),("/usage yesterday","Yesterday"),("/usage week","Current week"),("/usage month","Current month"),("/usage last 7d","Last 7 days"),("/usage last 30d","Last 30 days"),("/usage YYYY-MM-DD","Specific date"),("/usage YYYY-MM-DD YYYY-MM-DD","Date range"),("/usage all","All recorded usage")]),
+        ("Activity", [("/audit","Recent agent activity"),("/audit today","Today's activity"),("/audit denied","Blocked activity"),("/audit last <number>","Last N activity records")]),
+        ("Agent", [("/status","Show agent status"),("/rules","Show behavior rules"),("/help","Show command help")]),
+        ("Exit", [("/exit","Exit the client"),("/quit","Exit the client")]),
     ]
-    console.print("[bold]Agent commands[/bold]")
-    for command, description in rows:
-        if description is None:
-            console.print(f"[bold cyan]{command}[/bold cyan]")
-        else:
-            console.print(Text.assemble((f"  {command:<26}", "magenta"), description))
-    console.print("[dim]Tab completes commands and available items. Server keeps running after exit.[/dim]")
-
-
+    command_width = 34
+    for title, rows in sections:
+        console.print(f"[bold cyan]{title}[/bold cyan]")
+        for command, description in rows:
+            console.print(f"  [bold]{command:<{command_width}}[/bold]    [dim]{description}[/dim]")
+        console.print()
+    console.print("[dim]Tab completion is available for commands and supported items.[/dim]\n")
 def show_history(stateless=False):
     result = api("GET", f"/history?limit=20&stateless={str(stateless).lower()}")
     messages = result.get("messages", [])
@@ -479,6 +492,15 @@ def show_note(note_id):
     console.print()
     console.print(Markdown(note.get("content", "")))
     console.print()
+
+
+def delete_note_cli(note_id):
+    note_id = str(note_id).strip()
+    result = api("DELETE", "/notes/" + urllib.parse.quote(note_id))
+    title = result.get("title", "Untitled")
+    deleted_id = result.get("deleted_id", note_id)
+    display_id = deleted_id[5:].lstrip("0") if str(deleted_id).startswith("note_") else str(note_id)
+    console.print(Text.assemble("\n✓ Removed note ", (f"[{display_id}] ", "bold magenta"), title, ".\n"))
 
 
 def show_rules():
@@ -738,30 +760,68 @@ def _usage_range(argument):
 def show_usage(stateless=False, argument=None):
     historical = bool(argument and argument.strip())
     label = "Stateless Usage" if stateless else "Current Session Usage"
+    display_start = None
+    display_end = None
 
     if historical:
         start, end, label = _usage_range(argument)
+        display_start, display_end = start, end
         params = {"persistent": "true"}
         if start is not None:
             params["start"] = start.isoformat(timespec="seconds")
         if end is not None:
             params["end"] = end.isoformat(timespec="seconds")
         path = "/usage?" + urllib.parse.urlencode(params)
-        u = api("GET", path).get("usage", {})
+        payload = api("GET", path)
+        u = payload.get("usage", {})
     else:
         # Plain /usage is scoped to this CLI invocation, not server uptime.
         params = {"persistent": "true"}
         if CLI_SESSION_STARTED_AT is not None:
             params["start"] = CLI_SESSION_STARTED_AT.isoformat(timespec="seconds")
+            display_start = CLI_SESSION_STARTED_AT
+        display_end = datetime.now().astimezone()
         # While in stateless mode, preserve the existing UX: /usage shows only
         # usage generated by the current stateless conversation.
         if stateless:
             params["stateless_filter"] = "true"
         path = "/usage?" + urllib.parse.urlencode(params)
-        u = api("GET", path).get("usage", {})
+        payload = api("GET", path)
+        u = payload.get("usage", {})
 
     console.print()
     console.print(f"[bold]API Usage — {label}[/bold]")
+
+    # Keep the range compact but explicit. Range queries use an exclusive end,
+    # so date-bounded periods are displayed as their human-facing final minute.
+    if historical and display_start is None and display_end is None:
+        bounds = api("GET", "/usage/bounds")
+        first_recorded = bounds.get("first_recorded")
+        last_recorded = bounds.get("last_recorded")
+        if first_recorded and last_recorded:
+            def _parse_bound(value):
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            console.print(
+                f"[dim]Period: {_parse_bound(first_recorded).astimezone().strftime('%Y-%m-%d %H:%M')} "
+                f"→ {_parse_bound(last_recorded).astimezone().strftime('%Y-%m-%d %H:%M')}[/dim]"
+            )
+        else:
+            console.print("[dim]Period: No recorded activity[/dim]")
+    else:
+        def _fmt(dt):
+            return dt.astimezone().strftime("%Y-%m-%d %H:%M") if dt is not None else "—"
+
+        shown_end = display_end
+        arg = (argument or "").strip().lower()
+        if historical and shown_end is not None and (
+            arg in {"today", "yesterday", "week", "month"}
+            or re.fullmatch(r"\d{4}-\d{2}-\d{2}", arg)
+            or re.fullmatch(r"\d{4}-\d{2}-\d{2}\s+\d{4}-\d{2}-\d{2}", arg)
+        ):
+            shown_end = shown_end - timedelta(minutes=1)
+
+        console.print(f"[dim]Period: {_fmt(display_start)} → {_fmt(shown_end)}[/dim]")
+
     console.print(f"API requests:   {int(u.get('api_requests', 0) or 0):,}")
     console.print(f"Web searches:   {int(u.get('web_searches', 0) or 0):,}")
     input_tokens = int(u.get('input_tokens', 0) or 0)
@@ -786,7 +846,6 @@ def show_usage(stateless=False, argument=None):
 
     estimated_cost = float(u.get("estimated_cost_usd", 0) or 0)
     console.print(f"Estimated cost:  ${estimated_cost:.4f}\n")
-
 
 def wait_for_server(timeout=SERVER_READY_TIMEOUT, poll_seconds=SERVER_READY_POLL_SECONDS):
     """Wait for the backend to finish startup before continuing the CLI."""
@@ -816,6 +875,92 @@ def wait_for_server(timeout=SERVER_READY_TIMEOUT, poll_seconds=SERVER_READY_POLL
 
         time.sleep(poll_seconds)
 
+
+def _format_local_timestamp(value):
+    """Convert stored UTC timestamps to local time and display as YYYY-MM-DD HH:MM."""
+    if not value:
+        return ""
+    raw = str(value).strip()
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return raw[:16].replace("T", " ")
+
+
+def show_audit(argument=None):
+    argument = (argument or "").strip().casefold()
+    params = {"limit": 50}
+    title = "Activity"
+
+    if argument == "denied":
+        params["denied"] = "true"
+        title = "Blocked Activity"
+    elif argument == "today":
+        params["date"] = datetime.now().strftime("%Y-%m-%d")
+        title = "Activity — Today"
+    elif argument.startswith("last "):
+        try:
+            params["limit"] = max(1, min(int(argument.split()[1]), 500))
+        except (ValueError, IndexError):
+            console.print("\n[yellow]Usage:[/yellow] /audit last <number>\n")
+            return
+    elif argument:
+        console.print("\n[yellow]Usage:[/yellow] /audit | /audit today | /audit denied | /audit last <number>\n")
+        return
+
+    query = urllib.parse.urlencode(params)
+    events = api("GET", "/audit?" + query).get("events", [])
+    console.print(f"\n[bold]{title}[/bold]\n")
+    if not events:
+        console.print("[dim]No activity recorded.[/dim]\n")
+        return
+
+    for event in events:
+        allowed = bool(event.get("allowed"))
+        executed = bool(event.get("executed"))
+        success = event.get("success")
+        if not allowed:
+            icon = "🛡"
+            state = "DENIED"
+        elif executed and success:
+            icon = "✓"
+            state = "OK"
+        elif executed:
+            icon = "⚠"
+            state = "FAILED"
+        else:
+            icon = "•"
+            state = "NOT RUN"
+
+        created = event.get("created_at", "")
+        when = _format_local_timestamp(created)
+        origin = str(event.get("origin") or event.get("request_type") or "chat").upper()
+        if origin == "CHAT":
+            origin = "USER"
+        elif origin in {"SCHEDULED_TASK", "SCHEDULED"}:
+            origin = "TASK"
+
+        tool = event.get("tool_name", "")
+        operation = event.get("operation") or ""
+        target = event.get("target") or ""
+
+        if tool == "scheduled_task":
+            action = f"{target} · {operation}" if target else operation
+        else:
+            action = tool
+            if target:
+                action += f"  {target}"
+
+        line = f"{icon} {when}  {origin:<4}  {action}"
+        console.print(line)
+
+        if not allowed or (executed and not success):
+            reason = event.get("reason") or event.get("result_status") or state
+            console.print(f"   [dim]{state} · {reason}[/dim]")
+    console.print()
 
 def show_status(initial=False, status_data=None):
     s = status_data if status_data is not None else api("GET", "/status")
@@ -970,6 +1115,24 @@ def main():
                 continue
             if lowered == "/notes":
                 show_notes(); continue
+            if lowered.startswith("/notes remove"):
+                parts = message.split(maxsplit=2)
+                if len(parts) != 3 or not parts[2].strip().isdigit():
+                    console.print("\n[yellow]Usage:[/yellow] /notes remove <number>\n")
+                    continue
+                note_id = parts[2].strip()
+                try:
+                    note = api("GET", "/notes/" + urllib.parse.quote(note_id)).get("note")
+                except RuntimeError as exc:
+                    console.print(f"\n[yellow]{exc}[/yellow]\n")
+                    continue
+                title = note.get("title", "Untitled") if note else "Untitled"
+                answer = session.prompt(f'Delete note [{note_id}] {title}? [y/N]: ').strip().casefold()
+                if answer in {"y", "yes"}:
+                    delete_note_cli(note_id)
+                else:
+                    console.print("\n[dim]Cancelled.[/dim]\n")
+                continue
             if lowered.startswith("/notes "):
                 query = message[7:].strip()
                 if not query:
@@ -1018,6 +1181,14 @@ def main():
                 else:
                     console.print("\n[yellow]Usage:[/yellow] /inbox <number> | /inbox read <number> | /inbox unread <number> | /inbox remove <number>\n")
                 continue
+            if lowered == "/audit" or lowered.startswith("/audit "):
+                argument = message[len("/audit"):].strip()
+                try:
+                    show_audit(argument)
+                except RuntimeError as exc:
+                    console.print(f"\n[yellow]{exc}[/yellow]\n")
+                continue
+
             if lowered == "/status":
                 show_status(); continue
             if message.startswith("/"):

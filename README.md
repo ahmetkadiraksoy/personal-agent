@@ -22,6 +22,7 @@ are intentionally kept outside version control.
 
 - [Features](#features)
 - [Requirements](#requirements)
+- [Storage Layout](#storage-layout)
 - [Installation](#installation)
   - [macOS](#macos)
   - [Linux / Raspberry Pi OS](#linux--raspberry-pi-os)
@@ -66,206 +67,144 @@ Python dependencies are listed in `requirements.txt`.
 
 ------------------------------------------------------------------------
 
-# Installation
+# Storage Layout
 
-## macOS
+Personal Agent separates application code from private state and user files. This makes upgrades safer and gives the workspace a clear filesystem security boundary.
 
-### 1. Install Python and Git
-
-If Python 3 and Git are already installed, you can skip this step.
-
-Using Homebrew:
-
-``` bash
-brew install python@3.12 git
-```
-
-If Homebrew is not installed, Python can instead be installed from the
-official Python distribution.
-
-Verify:
-
-``` bash
-/opt/homebrew/bin/python3.12 --version
-git --version
-```
-
-### 2. Get the project
-
-Using Git:
-
-``` bash
-git clone https://github.com/ahmetkadiraksoy/personal-agent.git
-cd personal-agent
-```
-
-Alternatively, download the repository from GitHub and extract it.
-
-### 3. Create a virtual environment
-
-``` bash
-/opt/homebrew/bin/python3.12 -m venv .venv
-source .venv/bin/activate
-python --version
-```
-
-### 4. Install dependencies
-
-``` bash
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-### Download the local embedding model
-
-The agent uses the local `intfloat/multilingual-e5-base` Sentence Transformers model for semantic memory and note retrieval. The model is approximately 500 MB and is downloaded only once; afterward it is loaded from the local Hugging Face cache.
-
-Download and cache it during installation:
-
-```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-base')"
-```
-
-This keeps the first `agent-server` startup from unexpectedly downloading the model. The embedding model runs locally on your computer; do not add the downloaded model files to the GitHub repository.
-
-
-### 5. Configure the environment
-
-The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
-
-The repository includes `.env.example`, a safe configuration template with no secrets. Copy it to `.env` so the template remains available while `.env` stores your machine-specific private configuration.
-
-On **macOS or Linux**:
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-After saving the file, your project directory should look approximately like:
+### Linux / Raspberry Pi OS
 
 ```text
-personal-agent/
-├── agent
-├── agent-server
-├── requirements.txt
-├── README.md
-├── .gitignore
-└── .env
+/home/YOUR_USERNAME/
+│
+├── PersonalAgent/                         ← USER WORKSPACE
+│   └── ...                                ← files and folders managed by you/agent
+│
+├── .local/
+│   ├── bin/
+│   │   └── agent                          ← command-line launcher
+│   │
+│   ├── lib/
+│   │   └── personal-agent/                ← APPLICATION
+│   │       ├── agent
+│   │       ├── agent-server
+│   │       ├── requirements.txt
+│   │       ├── .env.example
+│   │       ├── README.md
+│   │       ├── LICENSE
+│   │       ├── assets/
+│   │       └── .venv/
+│   │
+│   └── share/
+│       └── personal-agent/                ← PERSISTENT DATA
+│           ├── agent.db
+│           ├── notes.db
+│           ├── memory.json
+│           └── rules.json
+│
+├── .config/
+│   ├── personal-agent/                    ← PRIVATE CONFIGURATION
+│   │   ├── .env
+│   │   ├── google_token.json
+│   │   ├── credentials.json
+│   │   └── client_secret*.json
+│   │
+│   └── systemd/
+│       └── user/
+│           └── personal-agent.service
+│
+└── .cache/
+    └── personal-agent/                    ← REBUILDABLE CACHE
+        ├── memory_embeddings.npz
+        └── note_embeddings.npz
 ```
 
-The `.env` file must remain local. **Do not upload or commit it to GitHub.** The repository's `.gitignore` is configured to exclude it.
-
-To verify that the variable is being loaded correctly without displaying the secret itself, activate the project's virtual environment and run:
-
-```bash
-python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
-```
-
-A successful configuration should print:
+### macOS
 
 ```text
-OpenAI API key configured: True
+/Users/YOUR_USERNAME/
+│
+├── PersonalAgent/                         ← USER WORKSPACE
+│   └── ...                                ← files and folders managed by you/agent
+│
+├── .local/
+│   └── bin/
+│       └── agent                          ← command-line launcher
+│
+└── Library/
+    │
+    ├── Application Support/
+    │   └── PersonalAgent/
+    │       │
+    │       ├── app/                       ← APPLICATION
+    │       │   ├── agent
+    │       │   ├── agent-server
+    │       │   ├── requirements.txt
+    │       │   ├── .env.example
+    │       │   ├── README.md
+    │       │   ├── LICENSE
+    │       │   ├── assets/
+    │       │   └── .venv/
+    │       │
+    │       ├── config/                    ← PRIVATE CONFIGURATION
+    │       │   ├── .env
+    │       │   ├── google_token.json
+    │       │   ├── credentials.json
+    │       │   └── client_secret*.json
+    │       │
+    │       └── data/                      ← PERSISTENT DATA
+    │           ├── agent.db
+    │           ├── notes.db
+    │           ├── memory.json
+    │           └── rules.json
+    │
+    ├── Caches/
+    │   └── PersonalAgent/                 ← REBUILDABLE CACHE
+    │       ├── memory_embeddings.npz
+    │       └── note_embeddings.npz
+    │
+    ├── LaunchAgents/
+    │   └── com.personalagent.server.plist
+    │
+    └── Logs/
+        ├── PersonalAgent.log
+        └── PersonalAgent-error.log
 ```
 
-You can then start `agent-server` and the `agent` client as described below.
-### 6. Make the programs executable
+### Windows
 
-If necessary:
+The server uses the corresponding per-user AppData locations for private configuration/data/cache and `~/PersonalAgent` as the workspace.
 
-``` bash
-chmod +x agent agent-server
-```
+The workspace is intentionally user-visible. Agent filesystem tools are restricted to `~/PersonalAgent`; requested paths are resolved before the boundary check so `..` traversal and symlinks cannot be used to escape the workspace. Do not place API keys, SSH keys, or other application secrets in the workspace.
 
-### 7. Run the application
-
-Start the server in one terminal:
-
-``` bash
-./agent-server
-```
-
-Then open another terminal, activate the same virtual environment, and
-start the client:
-
-``` bash
-source .venv/bin/activate
-./agent
-```
+Private state is no longer stored beside `agent` and `agent-server`. Reinstalling application code therefore does not require copying databases or memory files out of the application directory.
 
 ------------------------------------------------------------------------
 
-## Optional: Run the server automatically with launchd
+# Installation
 
-This step is optional. On macOS, the equivalent of a Linux `systemd` service is a `launchd` LaunchAgent. This keeps the backend running in the background and can start it automatically when you log in.
+For macOS and Linux/Raspberry Pi OS, the recommended installation method is the automatic installer. It detects the platform, installs the application and Python environment, creates the appropriate storage directories, configures the launcher, and can install the background service.
 
-First determine your project path:
+## macOS
 
-```bash
-cd /path/to/personal-agent
-pwd
-```
+### Quick Install (Recommended)
 
-The example below assumes:
-
-```text
-User: YOUR_USERNAME
-Project: /Users/YOUR_USERNAME/personal-agent
-Virtual environment: /Users/YOUR_USERNAME/personal-agent/.venv
-```
-
-Create a LaunchAgent file:
+Run:
 
 ```bash
-nano ~/Library/LaunchAgents/com.personalagent.server.plist
+curl -fsSL https://raw.githubusercontent.com/ahmetkadiraksoy/personal-agent/main/installer.sh | bash
 ```
 
-Add:
+The installer places the application and private state in the macOS locations shown in [Storage Layout](#storage-layout), creates the `agent` launcher, prompts for the OpenAI API key when necessary, and can install/start the LaunchAgent. Existing configuration, databases, memory, and workspace files are kept outside the application directory so reinstalling the application does not overwrite them.
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.personalagent.server</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOUR_USERNAME/personal-agent/.venv/bin/python</string>
-        <string>/Users/YOUR_USERNAME/personal-agent/agent-server</string>
-    </array>
-
-    <key>WorkingDirectory</key>
-    <string>/Users/YOUR_USERNAME/personal-agent</string>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>KeepAlive</key>
-    <true/>
-
-    <key>StandardOutPath</key>
-    <string>/Users/YOUR_USERNAME/personal-agent/agent-server.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>/Users/YOUR_USERNAME/personal-agent/agent-server-error.log</string>
-</dict>
-</plist>
-```
-
-Change the username and paths if the project is installed elsewhere.
-
-Load and start it:
+After installation, start the terminal client with:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
+agent
 ```
 
 ### Service management
 
-Check whether it is loaded:
+Check the background service:
 
 ```bash
 launchctl print gui/$(id -u)/com.personalagent.server
@@ -277,325 +216,88 @@ Restart it:
 launchctl kickstart -k gui/$(id -u)/com.personalagent.server
 ```
 
-Stop and unload it:
+View logs:
 
 ```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
-```
-
-Load it again:
-
-```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
-```
-
-View output:
-
-```bash
-tail -f /Users/YOUR_USERNAME/personal-agent/agent-server.log
+tail -f ~/Library/Logs/PersonalAgent.log
 ```
 
 View errors:
 
 ```bash
-tail -f /Users/YOUR_USERNAME/personal-agent/agent-server-error.log
+tail -f ~/Library/Logs/PersonalAgent-error.log
 ```
 
-After the LaunchAgent is running, launch only the client when you want to use the agent:
-
-```bash
-cd /Users/YOUR_USERNAME/personal-agent
-source .venv/bin/activate
-./agent
-```
-
-### After updating the code
-
-If only `agent` changes, no backend restart is required.
-
-If `agent-server` changes:
-
-```bash
-launchctl kickstart -k gui/$(id -u)/com.personalagent.server
-```
-
-If the `.plist` file itself changes, unload and reload it:
-
-```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
-```
-
----
+------------------------------------------------------------------------
 
 ## Linux / Raspberry Pi OS
 
-These instructions assume a Debian/Ubuntu/Raspberry Pi OS-based system.
+### Quick Install (Recommended)
 
-### 1. Install system requirements
-
-``` bash
-sudo apt update
-sudo apt install python3.12 python3.12-venv python3-pip git
-```
-
-Verify:
-
-``` bash
-python3.12 --version
-git --version
-```
-
-### 2. Get the project
-
-``` bash
-git clone https://github.com/ahmetkadiraksoy/personal-agent.git
-cd personal-agent
-```
-
-Or download and extract the repository manually.
-
-### 3. Create a virtual environment
-
-``` bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python --version
-```
-
-### 4. Install dependencies
-
-``` bash
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-### Download the local embedding model
-
-The agent uses the local `intfloat/multilingual-e5-base` Sentence Transformers model for semantic memory and note retrieval. The model is approximately 500 MB and is downloaded only once; afterward it is loaded from the local Hugging Face cache.
-
-Download and cache it during installation:
+Run:
 
 ```bash
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-base')"
+curl -fsSL https://raw.githubusercontent.com/ahmetkadiraksoy/personal-agent/main/installer.sh | bash
 ```
 
-This keeps the first `agent-server` startup from unexpectedly downloading the model. The embedding model runs locally on your computer; do not add the downloaded model files to the GitHub repository.
+The installer places the application and private state in the Linux locations shown in [Storage Layout](#storage-layout), creates the `agent` launcher, configures the Python environment and dependencies, prompts for the OpenAI API key when necessary, and can install/start the per-user `systemd` service. On supported ARM64 systems such as Raspberry Pi, it installs CPU-only PyTorch.
 
-
-On a Raspberry Pi, packages related to PyTorch, Transformers, and
-Sentence Transformers may take longer to install than on a desktop
-computer.
-
-### 5. Configure the environment
-
-The agent uses a `.env` file to store configuration values that should **not** be included in the GitHub repository, particularly your OpenAI API key.
-
-The repository includes `.env.example`, a safe configuration template with no secrets. Copy it to `.env` so the template remains available while `.env` stores your machine-specific private configuration.
-
-On **macOS or Linux**:
+After installation, start the terminal client with:
 
 ```bash
-cp .env.example .env
-nano .env
-```
-
-On **Windows PowerShell**:
-
-```powershell
-Copy-Item .env.example .env
-notepad .env
-```
-
-Then set your OpenAI API key in `.env`:
-
-```dotenv
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-Replace `your_openai_api_key_here` with your actual OpenAI API key. For example:
-
-```dotenv
-OPENAI_API_KEY=sk-example123
-```
-
-Do not put quotation marks around the key unless your value specifically requires them.
-
-If you do not already have an OpenAI API key, create one through the OpenAI API platform. An API key is separate from a ChatGPT subscription; API usage is billed through the OpenAI API account.
-
-After saving the file, your project directory should look approximately like:
-
-```text
-personal-agent/
-├── agent
-├── agent-server
-├── requirements.txt
-├── README.md
-├── .gitignore
-└── .env
-```
-
-The `.env` file must remain local. **Do not upload or commit it to GitHub.** The repository's `.gitignore` is configured to exclude it.
-
-To verify that the variable is being loaded correctly without displaying the secret itself, activate the project's virtual environment and run:
-
-```bash
-python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
-```
-
-A successful configuration should print:
-
-```text
-OpenAI API key configured: True
-```
-
-You can then start `agent-server` and the `agent` client as described below.
-### 6. Make the programs executable
-
-``` bash
-chmod +x agent agent-server
-```
-
-### 7. Run the application
-
-Start the server:
-
-``` bash
-./agent-server
-```
-
-In another terminal:
-
-``` bash
-source .venv/bin/activate
-./agent
-```
-
-## Optional: Run the server automatically with systemd
-
-This step is optional. On Linux and Raspberry Pi OS, the backend can run continuously as a `systemd` service. This means it can start automatically at boot and you do not need to leave a terminal open.
-
-The following example assumes:
-
-```text
-User: YOUR_USERNAME
-Project: /home/YOUR_USERNAME/personal-agent
-Virtual environment: /home/YOUR_USERNAME/personal-agent/.venv
-```
-
-If your username or project path differs, change the paths accordingly.
-
-Create the service:
-
-```bash
-sudo nano /etc/systemd/system/agent-server.service
-```
-
-Use:
-
-```ini
-[Unit]
-Description=Personal AI Agent Server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=YOUR_USERNAME
-WorkingDirectory=/home/YOUR_USERNAME/personal-agent
-ExecStart=/home/YOUR_USERNAME/personal-agent/.venv/bin/python /home/YOUR_USERNAME/personal-agent/agent-server
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Reload `systemd`:
-
-```bash
-sudo systemctl daemon-reload
-```
-
-Enable the service at boot and start it immediately:
-
-```bash
-sudo systemctl enable --now agent-server
+agent
 ```
 
 ### Service management
 
+The installer uses a **user-level** systemd service. Do not use `sudo` for normal service management.
+
 Check status:
 
 ```bash
-systemctl status agent-server
+systemctl --user status personal-agent
 ```
 
 Start:
 
 ```bash
-sudo systemctl start agent-server
+systemctl --user start personal-agent
 ```
 
 Stop:
 
 ```bash
-sudo systemctl stop agent-server
+systemctl --user stop personal-agent
 ```
 
 Restart:
 
 ```bash
-sudo systemctl restart agent-server
-```
-
-Enable automatic startup:
-
-```bash
-sudo systemctl enable agent-server
-```
-
-Disable automatic startup:
-
-```bash
-sudo systemctl disable agent-server
+systemctl --user restart personal-agent
 ```
 
 View recent logs:
 
 ```bash
-journalctl -u agent-server -n 100
+journalctl --user -u personal-agent -n 100 --no-pager
 ```
 
 Follow logs live:
 
 ```bash
-journalctl -u agent-server -f
+journalctl --user -u personal-agent -f
 ```
 
-After the service is running, you only need to launch the client:
+To allow the user service to start at boot without an interactive login, enable lingering once (replace `YOUR_USERNAME` if necessary):
 
 ```bash
-cd /home/YOUR_USERNAME/personal-agent
-source .venv/bin/activate
-./agent
+sudo loginctl enable-linger YOUR_USERNAME
 ```
 
-### After updating the code
-
-If only `agent` changes, no server restart is required.
-
-If `agent-server` changes:
+Verify:
 
 ```bash
-sudo systemctl restart agent-server
-```
-
-If the `.service` file itself changes:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart agent-server
+loginctl show-user YOUR_USERNAME -p Linger
 ```
 
 ------------------------------------------------------------------------
@@ -693,8 +395,9 @@ nano .env
 On **Windows PowerShell**:
 
 ```powershell
-Copy-Item .env.example .env
-notepad .env
+New-Item -ItemType Directory -Force "$env:APPDATA\PersonalAgent" | Out-Null
+Copy-Item .env.example "$env:APPDATA\PersonalAgent\.env"
+notepad "$env:APPDATA\PersonalAgent\.env"
 ```
 
 Then set your OpenAI API key in `.env`:
@@ -713,24 +416,16 @@ Do not put quotation marks around the key unless your value specifically require
 
 If you do not already have an OpenAI API key, create one through the OpenAI API platform. An API key is separate from a ChatGPT subscription; API usage is billed through the OpenAI API account.
 
-After saving the file, your project directory should look approximately like:
+After saving the file, the private `.env` remains outside the source-code directory.
 
-```text
-personal-agent/
-├── agent
-├── agent-server
-├── requirements.txt
-├── README.md
-├── .gitignore
-└── .env
-```
+The source-code directory does not need to contain `.env`.
 
 The `.env` file must remain local. **Do not upload or commit it to GitHub.** The repository's `.gitignore` is configured to exclude it.
 
 To verify that the variable is being loaded correctly without displaying the secret itself, activate the project's virtual environment and run:
 
 ```bash
-python -c "from dotenv import load_dotenv; import os; load_dotenv(); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
+python -c "from dotenv import load_dotenv; import os; load_dotenv(os.path.expanduser('~/.config/personal-agent/.env')); print('OpenAI API key configured:', bool(os.getenv('OPENAI_API_KEY')))"
 ```
 
 A successful configuration should print:
@@ -863,42 +558,15 @@ If you change the task configuration itself, update it in Task Scheduler.
 
 # Configuration
 
-The project keeps configuration and private data locally.
+Private configuration is stored outside the application directory.
 
-At minimum, configure the OpenAI API credentials expected by
-`agent-server` in `.env`.
+- Linux / Raspberry Pi OS: `~/.config/personal-agent/.env`
+- macOS: `~/Library/Application Support/PersonalAgent/config/.env`
+- Windows: `%APPDATA%\\PersonalAgent\\.env`
 
-The repository also includes `.env.example`. You can copy it to create your local configuration:
+At minimum, set the OpenAI API credentials expected by `agent-server`. The repository's `.env.example` can be copied to the appropriate configuration directory. The installer does this automatically and can securely prompt for the API key without echoing it to the terminal.
 
-```bash
-cp .env.example .env
-```
-
-On Windows PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Then edit `.env` and replace the placeholder value with your own OpenAI API key.
-
-A typical installation will contain files similar to:
-
-``` text
-personal-agent/
-├── agent
-├── agent-server
-├── requirements.txt
-├── README.md
-├── .gitignore
-├── .env                       # local only
-├── memory.json                # local only
-├── notes.db                   # local only
-├── agent.db                   # local only
-└── ...
-```
-
-Do not put API keys directly into `agent` or `agent-server`.
+Do not put API keys directly into `agent` or `agent-server`, and do not put secrets in `~/PersonalAgent`.
 
 ## Google Calendar
 
@@ -974,47 +642,23 @@ Tab completion is available for commands and supported items.
 
 # Private and Generated Files
 
-The repository should contain source code and configuration templates,
-not personal data.
+The repository should contain source code and safe configuration templates, not personal data.
 
-Files such as the following should remain local:
+Private configuration includes `.env`, Google OAuth tokens, credentials, and client-secret files. Persistent data includes `memory.json`, `notes.db`, `agent.db`, and `rules.json`. Rebuildable embedding indexes are stored in the platform cache directory.
 
-``` text
-.env
-google_token.json
-credentials.json
-client_secret*.json
-memory.json
-notes.db
-agent.db
-rules.json
-memory_embeddings.npz
-note_embeddings.npz
-```
+The user workspace is `~/PersonalAgent/`. It is intentionally separate from both application code and private configuration. Agent filesystem tools may access only this workspace.
 
-The project's `.gitignore` should exclude these files.
-
-Never commit an OpenAI API key, Google OAuth token, client secret,
-personal memory database, or other credential.
+Never commit an OpenAI API key, Google OAuth token, client secret, personal memory database, or other credential.
 
 ------------------------------------------------------------------------
 
 # Moving to a New Computer
 
-To recreate the agent on another computer:
+To recreate the agent on another computer, install the application normally and then copy only the state you intentionally want to migrate: the configuration directory, persistent data directory, and `~/PersonalAgent/` workspace. Cached embedding indexes may be copied but are rebuildable.
 
-1.  Clone or download the repository.
-2.  Create a new Python virtual environment.
-3.  Install `requirements.txt`.
-4.  Create the local `.env` configuration.
-5.  Copy personal data files only if you intentionally want to migrate
-    them.
-6.  Reauthorize Google Calendar if necessary.
-7.  Start `agent-server`.
-8.  Start `agent`.
+Do **not** copy `.venv` between operating systems or computers. Create a fresh virtual environment on each machine.
 
-The `.venv` directory should **not** be copied between operating systems
-or computers. Create a fresh virtual environment on each machine.
+Google Calendar may require authorization again if its token is not migrated or is no longer valid.
 
 ------------------------------------------------------------------------
 
@@ -1047,109 +691,16 @@ supported platforms.
 
 # Uninstall
 
-Before uninstalling, decide whether you want to keep your local agent data. Depending on your configuration, the project directory may contain private files such as:
+The cross-platform installer can manage removal. When it detects an existing installation, choose **Remove application**. It then offers two modes:
 
-```text
-.env
-memory.json
-notes.db
-agent.db
-rules.json
-memory_embeddings.npz
-note_embeddings.npz
-google_token.json
-```
+1. **Remove app, keep settings/data/workspace** — removes application code, launcher, and background service while leaving private state and `~/PersonalAgent/` intact for a future reinstall.
+2. **Completely remove everything** — after an explicit `REMOVE EVERYTHING` confirmation, removes application code, configuration, persistent data, cache, credentials, and the workspace.
 
-Deleting these files may permanently remove your local configuration, memories, notes, and authentication data. Back up anything you want to keep before removing the project.
+For manual installations, stop/remove the platform background service first, then remove only the directories you intend to delete. Application code and personal state are separate by design; deleting the application directory alone does not delete memories, notes, configuration, or workspace files.
 
-## macOS
+You generally do **not** need to uninstall Python, Git, or other system-wide development tools.
 
-If you configured the optional `launchd` LaunchAgent, unload it first:
-
-```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.personalagent.server.plist
-```
-
-Then remove the LaunchAgent file:
-
-```bash
-rm ~/Library/LaunchAgents/com.personalagent.server.plist
-```
-
-If you did not configure the optional LaunchAgent, these steps are not necessary.
-
-Delete the project directory. For example:
-
-```bash
-rm -rf ~/Documents/agent
-```
-
-Change the path if you installed the project somewhere else.
-
-## Linux / Raspberry Pi OS
-
-If you configured the optional `systemd` service, stop and disable it:
-
-```bash
-sudo systemctl disable --now agent-server
-```
-
-Remove the service definition:
-
-```bash
-sudo rm /etc/systemd/system/agent-server.service
-```
-
-Reload `systemd`:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl reset-failed
-```
-
-If you did not configure the optional `systemd` service, these steps are not necessary.
-
-Delete the project directory. For example:
-
-```bash
-rm -rf ~/Documents/agent
-```
-
-Change the path if you installed the project somewhere else.
-
-## Windows
-
-If you configured the optional scheduled task, stop it if it is currently running:
-
-```powershell
-Stop-ScheduledTask -TaskName "Personal AI Agent Server" -ErrorAction SilentlyContinue
-```
-
-Then remove the task:
-
-```powershell
-Unregister-ScheduledTask -TaskName "Personal AI Agent Server" -Confirm:$false
-```
-
-If you did not configure the optional scheduled task, these steps are not necessary.
-
-Delete the `personal-agent` project directory using File Explorer or PowerShell. For example:
-
-```powershell
-Remove-Item -Recurse -Force "$HOME\Documents\personal-agent"
-```
-
-Change the path if you installed the project somewhere else.
-
-## What does not need to be removed
-
-You generally do **not** need to uninstall Python, Git, or other system-wide development tools. They may be used by other applications.
-
-The Python virtual environment (`.venv`) is stored inside the project directory, so deleting the project directory also removes the Python packages installed specifically for this agent.
-
-If you authorized Google Calendar, deleting the local Google token removes the agent's local authorization data. You can separately revoke the application's access from your Google account if you want to revoke the authorization itself.
-
----
+------------------------------------------------------------------------
 
 ## Disclaimer
 
