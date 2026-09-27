@@ -456,12 +456,30 @@ configure_api_key
 
 header "Installing command"
 mkdir -p "$BIN_DIR"
+# The command in ~/.local/bin is intentionally only a launcher. Never copy or
+# symlink the Python client here: doing so can bypass the app virtualenv and
+# accidentally invoke the system Python. Recreate it on every install/update.
+rm -f "$LAUNCHER"
 cat >"$LAUNCHER" <<EOF
 #!/usr/bin/env bash
-exec "$APP_DIR/.venv/bin/python" "$APP_DIR/agent" "\$@"
+set -e
+APP_DIR="$APP_DIR"
+PYTHON="\$APP_DIR/.venv/bin/python"
+CLIENT="\$APP_DIR/agent"
+
+if [[ ! -x "\$PYTHON" ]]; then
+  printf 'Personal Agent virtual environment is missing or not executable: %s\n' "\$PYTHON" >&2
+  exit 1
+fi
+if [[ ! -f "\$CLIENT" ]]; then
+  printf 'Personal Agent client is missing: %s\n' "\$CLIENT" >&2
+  exit 1
+fi
+
+exec "\$PYTHON" "\$CLIENT" "\$@"
 EOF
-chmod +x "$LAUNCHER"
-ok "Installed $LAUNCHER"
+chmod 755 "$LAUNCHER"
+ok "Installed launcher $LAUNCHER"
 
 install_linux_service(){
   mkdir -p "$SERVICE_DIR"

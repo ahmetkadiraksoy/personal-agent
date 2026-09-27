@@ -111,6 +111,9 @@ MEMORY_RETRIEVAL_LIMIT = _env_int("MEMORY_RETRIEVAL_LIMIT", 5, 1, 100)
 MAX_TOOL_ROUNDS = _env_int("MAX_TOOL_ROUNDS", 12, 1, 100)
 SCHEDULER_POLL_SECONDS = _env_int("SCHEDULER_POLL_SECONDS", 60, 1, 3600)
 MAX_SCHEDULED_NOTIFICATIONS = _env_int("MAX_SCHEDULED_NOTIFICATIONS", 5, 1, 20)
+# Fail closed for paid background work: by default, each scheduled occurrence
+# gets one attempt only. Raising this explicitly enables bounded retries.
+SCHEDULED_TASK_MAX_ATTEMPTS = _env_int("SCHEDULED_TASK_MAX_ATTEMPTS", 1, 1, 10)
 WORKSPACE_MAX_READ_BYTES = _env_int("WORKSPACE_MAX_READ_BYTES", 1_000_000, 1_000, 20_000_000)
 WORKSPACE_MAX_WRITE_BYTES = _env_int("WORKSPACE_MAX_WRITE_BYTES", 2_000_000, 1_000, 50_000_000)
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -3388,6 +3391,33 @@ def list_scheduled_tasks(include_disabled=True):
     return result
 
 
+def list_scheduled_task_queue():
+    """Return currently running and queued scheduled-task occurrences."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, task_id, task_name, scheduled_for, status, attempts, "
+            "last_error, enqueued_at, started_at "
+            "FROM scheduled_task_queue "
+            "WHERE status IN ('running','queued') "
+            "ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, "
+            "scheduled_for ASC, id ASC"
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["id"] = f"queue_{int(item['id']):06d}"
+        item["task_id"] = (
+            f"task_{int(item['task_id']):06d}"
+            if item.get("task_id") is not None else None
+        )
+        # attempts is incremented when a queued occurrence is claimed.
+        # A queued row therefore shows the number of attempts already made,
+        # while a running row shows the current attempt number.
+        item["attempts"] = int(item.get("attempts") or 0)
+        result.append(item)
+    return result
+
+
 def set_scheduled_task_enabled(task_id, enabled):
     try:
         numeric_id = _task_id_number(task_id)
@@ -3631,7 +3661,7 @@ Avoid repeating unchanged information from the previous result when possible.
 [/SCHEDULED TASK EXECUTION]"""
 
     try:
-        answer, _ = run_agent(
+        answer, _, _ = run_agent(
             execution_prompt, previous_response_id=None, status_callback=None, request_type="task"
         )
         answer = (answer or "").strip()
@@ -3793,15 +3823,30 @@ def _task_worker_loop():
                 conn.execute("DELETE FROM scheduled_task_queue WHERE id=?", (job["id"],))
                 conn.commit()
         else:
-            # Keep failed work in the persistent FIFO. It will retry after a short
-            # delay rather than being lost.
+            # Never allow a broken scheduled task to create an unbounded paid
+            # retry loop. attempts was incremented when this job was claimed.
+            # The safe default is one attempt per scheduled occurrence.
+            error = result.get("error", "Unknown task error")
+            attempts = int(job.get("attempts", 0)) + 1
             with _db() as conn:
-                conn.execute(
-                    "UPDATE scheduled_task_queue SET status='queued', started_at=NULL, last_error=? WHERE id=?",
-                    (result.get("error", "Unknown task error"), job["id"]),
-                )
+                if attempts >= SCHEDULED_TASK_MAX_ATTEMPTS:
+                    # Drop only this failed occurrence. The recurring task itself
+                    # remains enabled and its next_run_at was already advanced
+                    # when this occurrence was enqueued. The audit log preserves
+                    # the failure details.
+                    conn.execute(
+                        "DELETE FROM scheduled_task_queue WHERE id=?",
+                        (job["id"],),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE scheduled_task_queue SET status='queued', started_at=NULL, last_error=? WHERE id=?",
+                        (error, job["id"]),
+                    )
                 conn.commit()
-            _SCHEDULER_STOP.wait(min(60, SCHEDULER_POLL_SECONDS))
+
+            if attempts < SCHEDULED_TASK_MAX_ATTEMPTS:
+                _SCHEDULER_STOP.wait(min(60, SCHEDULER_POLL_SECONDS))
 
 
 def start_scheduler():
@@ -4110,7 +4155,10 @@ def note_remove(note_id: str):
 
 @app.get("/tasks")
 def tasks():
-    return {"tasks": list_scheduled_tasks(include_disabled=True)}
+    return {
+        "tasks": list_scheduled_tasks(include_disabled=True),
+        "queue": list_scheduled_task_queue(),
+    }
 
 
 @app.post("/tasks/{task_id}/run")

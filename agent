@@ -549,23 +549,51 @@ def handle_rule_approval(proposal):
 
 def show_tasks():
     global _TASK_INDEX_MAP
-    tasks = api("GET", "/tasks").get("tasks", [])
+    payload = api("GET", "/tasks")
+    tasks = payload.get("tasks", [])
+    queue_items = payload.get("queue", [])
     _TASK_INDEX_MAP = {i: task.get("id") for i, task in enumerate(tasks, 1)}
+
     console.print()
-    if not tasks:
-        console.print("[dim]No scheduled tasks.[/dim]\n")
-        return
-    console.print(f"[bold]Scheduled Tasks ({len(tasks)})[/bold]")
-    for index, task in enumerate(tasks, 1):
-        state = "[green]enabled[/green]" if task.get("enabled") else "[dim]disabled[/dim]"
-        if task.get("frequency") == "weekly":
-            schedule = f"{task.get('weekday_name','?')} {task.get('run_time','?')}"
-        else:
-            schedule = f"daily {task.get('run_time','?')}"
-        console.print(f"[bold][{index}] [/bold]{task.get('name','Untitled')} ({schedule}, {state})")
-        console.print(f"  Next: {task.get('next_run_at','?')}")
-        if task.get("last_run_at"):
-            console.print(f"  Last: {task.get('last_run_at')}")
+    if tasks:
+        console.print(f"[bold]Scheduled Tasks ({len(tasks)})[/bold]")
+        for index, task in enumerate(tasks, 1):
+            state = "[green]enabled[/green]" if task.get("enabled") else "[dim]disabled[/dim]"
+            if task.get("frequency") == "weekly":
+                schedule = f"{task.get('weekday_name','?')} {task.get('run_time','?')}"
+            else:
+                schedule = f"daily {task.get('run_time','?')}"
+            console.print(f"[bold][{index}] [/bold]{task.get('name','Untitled')} ({schedule}, {state})")
+            console.print(f"  Next: {task.get('next_run_at','?')}")
+            if task.get("last_run_at"):
+                console.print(f"  Last: {task.get('last_run_at')}")
+    else:
+        console.print("[dim]No scheduled tasks.[/dim]")
+
+    running = [item for item in queue_items if item.get("status") == "running"]
+    queued = [item for item in queue_items if item.get("status") == "queued"]
+
+    console.print()
+    console.print("[bold]Execution Queue[/bold]")
+    if running:
+        for item in running:
+            attempt = max(1, int(item.get("attempts") or 0))
+            console.print(f"[cyan]● RUNNING[/cyan]  {item.get('task_name','Untitled')}")
+            console.print(f"  Scheduled: {item.get('scheduled_for','?')}")
+            console.print(f"  Started:   {item.get('started_at','?')} · Attempt {attempt}")
+    else:
+        console.print("[dim]● RUNNING  None[/dim]")
+
+    if queued:
+        console.print(f"[yellow]○ QUEUED ({len(queued)})[/yellow]")
+        for item in queued:
+            attempts = int(item.get("attempts") or 0)
+            suffix = f" · {attempts} prior attempt{'s' if attempts != 1 else ''}" if attempts else ""
+            console.print(
+                f"  {item.get('task_name','Untitled')} · scheduled {item.get('scheduled_for','?')}{suffix}"
+            )
+    else:
+        console.print("[dim]○ QUEUED   None[/dim]")
     console.print()
 
 
