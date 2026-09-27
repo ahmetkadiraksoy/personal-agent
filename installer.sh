@@ -5,6 +5,21 @@ APP_NAME="personal-agent"
 REPO_URL="${PERSONAL_AGENT_REPO:-https://github.com/ahmetkadiraksoy/personal-agent.git}"
 BRANCH="${PERSONAL_AGENT_BRANCH:-main}"
 
+VERBOSE=0
+for arg in "$@"; do
+  case "$arg" in
+    --verbose|-v) VERBOSE=1 ;;
+    --help|-h)
+      printf 'Usage: %s [--verbose]\n' "$(basename "$0")"
+      printf '  --verbose, -v   Show full command output during installation.\n'
+      exit 0
+      ;;
+    *) printf 'Error: unknown option: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
+LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/personal-agent-install.XXXXXX.log")"
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -24,7 +39,35 @@ info(){ printf '%s\n' "$*"; }
 die(){ err "$*"; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1; }
 
-cleanup(){ [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR" || true; }
+tty_read(){
+  # Interactive installer prompts must not read from stdin because the
+  # supported one-line install method pipes the script into bash.
+  [[ -r /dev/tty ]] || die "No interactive terminal is available for this prompt."
+  read "$@" </dev/tty
+}
+
+run_cmd(){
+  local description="$1"
+  shift
+  if (( VERBOSE )); then
+    "$@" 2>&1 | tee -a "$LOG_FILE"
+    local status=${PIPESTATUS[0]}
+    (( status == 0 )) || { err "$description failed."; info "Installation log: $LOG_FILE"; return "$status"; }
+  else
+    if ! "$@" >>"$LOG_FILE" 2>&1; then
+      err "$description failed."
+      printf '\nLast 40 lines of installer output:\n' >&2
+      tail -n 40 "$LOG_FILE" >&2 || true
+      printf '\nFull installation log: %s\n' "$LOG_FILE" >&2
+      return 1
+    fi
+  fi
+}
+
+cleanup(){
+  [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR" || true
+  if [[ "${INSTALL_SUCCEEDED:-0}" == 1 && "$VERBOSE" == 0 ]]; then rm -f "$LOG_FILE" || true; fi
+}
 trap cleanup EXIT
 trap 'die "Operation failed on line $LINENO."' ERR
 
@@ -158,7 +201,7 @@ remove_installation(){
   printf '\n  %s1)%s Remove app, %sKEEP%s settings/data/workspace for a future reinstall\n' "$BOLD" "$RESET" "$GREEN" "$RESET"
   printf '  %s2)%s %sCompletely remove everything%s\n' "$BOLD" "$RESET" "$RED" "$RESET"
   printf '  %s3)%s Cancel\n\n' "$BOLD" "$RESET"
-  read -r -p "Choice [1-3]: " choice
+  tty_read -r -p "Choice [1-3]: " choice
 
   case "$choice" in
     1)
@@ -170,8 +213,8 @@ remove_installation(){
       ;;
     2)
       printf '\n%s%sThis permanently deletes the app, configuration, databases, memory, cache, credentials, and workspace.%s\n' "$BOLD" "$RED" "$RESET"
-      read -r -p "Type REMOVE EVERYTHING to continue: " confirm
-      [[ "$confirm" == "REMOVE EVERYTHING" ]] || { warn "Removal cancelled."; exit 0; }
+      tty_read -r -p "Type REMOVE to continue: " confirm
+      [[ "$confirm" == "REMOVE" ]] || { warn "Removal cancelled."; exit 0; }
       remove_service
       rm -f "$LAUNCHER"
       rm -rf "$APP_DIR" "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$WORKSPACE_DIR" "$LEGACY_STATE_BACKUP"
@@ -191,7 +234,7 @@ if [[ -e "$APP_DIR" ]]; then
   printf '  %s1)%s Reinstall / update application\n' "$BOLD" "$RESET"
   printf '  %s2)%s Remove application\n' "$BOLD" "$RESET"
   printf '  %s3)%s Cancel\n\n' "$BOLD" "$RESET"
-  read -r -p "Choice [1-3]: " choice
+  tty_read -r -p "Choice [1-3]: " choice
   case "$choice" in
     1)
       header "Preparing reinstall"
@@ -206,11 +249,50 @@ fi
 
 install_linux_prereqs(){
   need apt-get || return 1
-  read -r -p "Install required packages with apt? [Y/n]: " a
+  tty_read -r -p "Install required system packages with apt? [Y/n]: " a
   a="${a:-Y}"
   [[ "$a" =~ ^[Yy]$ ]] || die "Prerequisites are required."
-  sudo apt-get update
-  sudo apt-get install -y git curl python3 python3-venv python3-pip
+  run_cmd "Updating apt package information" sudo apt-get update
+  # Python itself is handled separately below so older Raspberry Pi OS
+  # releases are not forced to replace or modify their system Python.
+  run_cmd "Installing required system packages" sudo apt-get install -y git curl
+}
+
+find_linux_python(){
+  local candidate=""
+  if need python3.12; then
+    candidate="$(command -v python3.12)"
+  elif [[ -x "$HOME/.local/bin/python3.12" ]]; then
+    candidate="$HOME/.local/bin/python3.12"
+  fi
+
+  if [[ -n "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] == (3,12) else 1)' >/dev/null 2>&1; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+install_linux_python(){
+  PYTHON_BIN="$(find_linux_python || true)"
+  [[ -n "$PYTHON_BIN" ]] && return 0
+
+  # Use uv for a private Python 3.12 when the distribution does not provide
+  # it. This is especially useful on Raspberry Pi OS/Debian releases whose
+  # system Python is older. The system Python is left untouched.
+  if ! need uv && [[ ! -x "$HOME/.local/bin/uv" ]]; then
+    header "Installing Python 3.12 runtime"
+    run_cmd "Installing uv" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+  fi
+
+  local uv_bin
+  uv_bin="$(command -v uv 2>/dev/null || true)"
+  [[ -n "$uv_bin" ]] || uv_bin="$HOME/.local/bin/uv"
+  [[ -x "$uv_bin" ]] || die "Could not install uv, which is required to provide Python 3.12 on this system."
+
+  run_cmd "Installing Python 3.12" "$uv_bin" python install 3.12
+  PYTHON_BIN="$($uv_bin python find 3.12 2>/dev/null || true)"
+  [[ -n "$PYTHON_BIN" && -x "$PYTHON_BIN" ]] || die "Python 3.12 was installed, but its executable could not be located."
 }
 
 find_macos_python(){
@@ -247,7 +329,7 @@ install_macos_prereqs(){
   if [[ -z "$PYTHON_BIN" ]]; then
     if need brew; then
       header "Installing Python 3.12 with Homebrew"
-      brew install python@3.12
+      run_cmd "Installing Python 3.12" brew install python@3.12
       PYTHON_BIN="$(find_macos_python || true)"
       [[ -n "$PYTHON_BIN" ]] || die "Homebrew installed python@3.12, but the installer could not locate its Python 3.12 executable."
     else
@@ -259,17 +341,12 @@ install_macos_prereqs(){
 # Prerequisites and Python selection.
 if [[ "$PLATFORM" == "Linux" ]]; then
   missing=()
-  for c in git curl python3; do need "$c" || missing+=("$c"); done
-  if need python3; then
-    tv="$(mktemp -d)"
-    python3 -m venv "$tv/v" >/dev/null 2>&1 || missing+=("python3-venv")
-    rm -rf "$tv"
-  fi
+  for c in git curl; do need "$c" || missing+=("$c"); done
   if ((${#missing[@]})); then
     warn "Missing prerequisites: ${missing[*]}"
-    install_linux_prereqs || die "Install Git, curl, Python 3, and Python venv support, then rerun."
+    install_linux_prereqs || die "Install Git and curl, then rerun."
   fi
-  PYTHON_BIN="$(command -v python3)"
+  install_linux_python
 else
   install_macos_prereqs
 fi
@@ -278,7 +355,7 @@ ok "Python $("$PYTHON_BIN" -c 'import sys; print(".".join(map(str,sys.version_in
 
 TMP_DIR="$(mktemp -d)"
 header "Downloading Personal AI Agent"
-git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TMP_DIR/repo"
+run_cmd "Downloading Personal AI Agent" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TMP_DIR/repo"
 for f in agent agent-server requirements.txt; do
   [[ -e "$TMP_DIR/repo/$f" ]] || die "Repository is missing required file: $f"
 done
@@ -288,19 +365,21 @@ chmod +x "$APP_DIR/agent" "$APP_DIR/agent-server" 2>/dev/null || true
 ok "Application installed to $APP_DIR"
 
 header "Setting up Python environment"
-"$PYTHON_BIN" -m venv "$APP_DIR/.venv"
-"$APP_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+run_cmd "Creating Python virtual environment" "$PYTHON_BIN" -m venv "$APP_DIR/.venv"
+ok "Virtual environment created"
+run_cmd "Updating pip" "$APP_DIR/.venv/bin/python" -m pip install --upgrade pip
+ok "pip ready"
 
 # Linux ARM64/Raspberry Pi: force CPU-only PyTorch before sentence-transformers
 # to avoid pip pulling NVIDIA CUDA packages. Apple Silicon uses native PyTorch.
 if [[ "$PLATFORM" == "Linux" && ( "$ARCH" == "aarch64" || "$ARCH" == "arm64" ) ]]; then
   header "Installing CPU-only PyTorch for ARM64 Linux"
-  "$APP_DIR/.venv/bin/python" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+  run_cmd "Installing CPU-only PyTorch" "$APP_DIR/.venv/bin/python" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
   ok "CPU-only PyTorch installed"
 fi
 
 header "Installing dependencies"
-"$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
+run_cmd "Installing Python dependencies" "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
 ok "Dependencies installed"
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$WORKSPACE_DIR"
@@ -322,7 +401,7 @@ configure_api_key(){
 
   header "OpenAI configuration"
   info "An OpenAI API key is required to use Personal Agent."
-  read -r -p "Configure your API key now? [Y/n]: " answer
+  tty_read -r -p "Configure your API key now? [Y/n]: " answer
   answer="${answer:-Y}"
 
   if [[ ! "$answer" =~ ^[Yy]$ ]]; then
@@ -335,7 +414,7 @@ configure_api_key(){
   local api_key=""
   while [[ -z "$api_key" ]]; do
     printf 'OpenAI API key: '
-    IFS= read -r -s api_key
+    IFS= tty_read -r -s api_key
     printf '\n'
     if [[ -z "$api_key" ]]; then
       warn "API key cannot be empty. Try again, or press Ctrl+C to cancel."
@@ -402,10 +481,10 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-  systemctl --user daemon-reload
-  systemctl --user enable personal-agent.service >/dev/null
+  run_cmd "Reloading systemd user configuration" systemctl --user daemon-reload
+  run_cmd "Enabling Personal Agent service" systemctl --user enable personal-agent.service
   if api_key_configured; then
-    systemctl --user start personal-agent.service
+    run_cmd "Starting Personal Agent service" systemctl --user start personal-agent.service
     ok "personal-agent.service enabled and started"
   else
     warn "Service enabled but not started because OPENAI_API_KEY is not configured."
@@ -415,7 +494,7 @@ EOF
     printf '  systemctl --user start personal-agent\n'
   fi
 
-  read -r -p "Start the server at boot even before login (enable linger)? [y/N]: " a
+  tty_read -r -p "Start the server at boot even before login (enable linger)? [y/N]: " a
   if [[ "${a:-N}" =~ ^[Yy]$ ]]; then
     if need loginctl && loginctl enable-linger "$USER" 2>/dev/null; then
       ok "Linger enabled for $USER"
@@ -484,7 +563,7 @@ EOF
 SERVICE_INSTALLED=N
 if [[ "$PLATFORM" == "Linux" ]]; then
   if need systemctl; then
-    read -r -p "Install/start the systemd user service? [Y/n]: " a; a="${a:-Y}"
+    tty_read -r -p "Install/start the systemd user service? [Y/n]: " a; a="${a:-Y}"
     if [[ "$a" =~ ^[Yy]$ ]]; then
       install_linux_service
       SERVICE_INSTALLED=Y
@@ -493,44 +572,49 @@ if [[ "$PLATFORM" == "Linux" ]]; then
     warn "systemd not detected; background service skipped."
   fi
 else
-  read -r -p "Install/start the macOS LaunchAgent? [Y/n]: " a; a="${a:-Y}"
+  tty_read -r -p "Install/start the macOS LaunchAgent? [Y/n]: " a; a="${a:-Y}"
   if [[ "$a" =~ ^[Yy]$ ]]; then
     install_macos_service
     SERVICE_INSTALLED=Y
   fi
 fi
 
-header "Installation complete"
-printf '%sPlatform:%s    %s\n' "$BOLD" "$RESET" "$PLATFORM"
-printf '%sApplication:%s %s\n' "$BOLD" "$RESET" "$APP_DIR"
-printf '%sConfig:%s      %s\n' "$BOLD" "$RESET" "$CONFIG_DIR"
-printf '%sData:%s        %s\n' "$BOLD" "$RESET" "$DATA_DIR"
-printf '%sCache:%s       %s\n' "$BOLD" "$RESET" "$CACHE_DIR"
-printf '%sWorkspace:%s   %s\n' "$BOLD" "$RESET" "$WORKSPACE_DIR"
-printf '%sCommand:%s     %s\n' "$BOLD" "$RESET" "$LAUNCHER"
-if [[ "$SERVICE_INSTALLED" == Y ]]; then
-  if [[ "$PLATFORM" == "Linux" ]]; then
-    printf '%sService:%s     personal-agent.service\n' "$BOLD" "$RESET"
-  else
-    printf '%sService:%s     %s\n' "$BOLD" "$RESET" "$mac_service_label"
-  fi
+INSTALL_SUCCEEDED=1
+
+if (( VERBOSE )); then
+  header "Installation details"
+  printf '%sPlatform:%s    %s\n' "$BOLD" "$RESET" "$PLATFORM"
+  printf '%sApplication:%s %s\n' "$BOLD" "$RESET" "$APP_DIR"
+  printf '%sConfig:%s      %s\n' "$BOLD" "$RESET" "$CONFIG_DIR"
+  printf '%sData:%s        %s\n' "$BOLD" "$RESET" "$DATA_DIR"
+  printf '%sCache:%s       %s\n' "$BOLD" "$RESET" "$CACHE_DIR"
+  printf '%sCommand:%s     %s\n' "$BOLD" "$RESET" "$LAUNCHER"
 fi
 
+printf '\n%s────────────────────────────────────────%s\n' "$DIM" "$RESET"
+printf '%s%s✓ Personal Agent is ready%s\n' "$BOLD" "$GREEN" "$RESET"
+printf '%s────────────────────────────────────────%s\n' "$DIM" "$RESET"
+
 case ":$PATH:" in
-  *":$BIN_DIR:"*) printf '\nRun the agent with: %sagent%s\n' "$BOLD" "$RESET" ;;
+  *":$BIN_DIR:"*) printf '\nRun:\n\n    %sagent%s\n' "$BOLD" "$RESET" ;;
   *)
+    printf '\nRun:\n\n    "%s"\n' "$LAUNCHER"
     printf '\n%sNote:%s %s is not currently in PATH.\n' "$YELLOW" "$RESET" "$BIN_DIR"
-    printf 'Run with: "%s"\n' "$LAUNCHER"
-    printf 'Or add this to your shell profile:\n  export PATH="$HOME/.local/bin:$PATH"\n'
+    printf 'Add this to your shell profile if you want to use the shorter %sagent%s command:\n\n' "$BOLD" "$RESET"
+    printf '    export PATH="$HOME/.local/bin:$PATH"\n'
     ;;
 esac
 
+printf '\nWorkspace:\n\n    %s\n' "$WORKSPACE_DIR"
+printf '\nConfiguration:\n\n    %s/.env\n' "$CONFIG_DIR"
+
 if [[ "$SERVICE_INSTALLED" == Y ]]; then
+  printf '\nUseful commands:\n\n'
   if [[ "$PLATFORM" == "Linux" ]]; then
-    printf '\n%sService status:%s systemctl --user status personal-agent\n' "$DIM" "$RESET"
-    printf '%sService logs:%s   journalctl --user -u personal-agent -f\n' "$DIM" "$RESET"
+    printf '    systemctl --user status personal-agent\n'
+    printf '    journalctl --user -u personal-agent -f\n'
   else
-    printf '\n%sService status:%s launchctl print gui/%s/%s\n' "$DIM" "$RESET" "$(id -u)" "$mac_service_label"
-    printf '%sService logs:%s   tail -f "$HOME/Library/Logs/PersonalAgent-error.log"\n' "$DIM" "$RESET"
+    printf '    launchctl print gui/%s/%s\n' "$(id -u)" "$mac_service_label"
+    printf '    tail -f "$HOME/Library/Logs/PersonalAgent-error.log"\n'
   fi
 fi
