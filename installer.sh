@@ -64,6 +64,20 @@ run_cmd(){
   fi
 }
 
+run_cmd_live(){
+  # Use for long-running installation steps where visible progress is useful
+  # even when the installer was not started with --verbose.
+  local description="$1"
+  shift
+  "$@" 2>&1 | tee -a "$LOG_FILE"
+  local status=${PIPESTATUS[0]}
+  (( status == 0 )) || {
+    err "$description failed."
+    info "Installation log: $LOG_FILE"
+    return "$status"
+  }
+}
+
 cleanup(){
   [[ -n "${TMP_DIR:-}" && -d "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR" || true
   if [[ "${INSTALL_SUCCEEDED:-0}" == 1 && "$VERBOSE" == 0 ]]; then rm -f "$LOG_FILE" || true; fi
@@ -213,8 +227,8 @@ remove_installation(){
       ;;
     2)
       printf '\n%s%sThis permanently deletes the app, configuration, databases, memory, cache, credentials, and workspace.%s\n' "$BOLD" "$RED" "$RESET"
-      tty_read -r -p "Type REMOVE EVERYTHING to continue: " confirm
-      [[ "$confirm" == "REMOVE EVERYTHING" ]] || { warn "Removal cancelled."; exit 0; }
+      tty_read -r -p "Type REMOVE to continue: " confirm
+      [[ "$confirm" == "REMOVE" ]] || { warn "Removal cancelled."; exit 0; }
       remove_service
       rm -f "$LAUNCHER"
       rm -rf "$APP_DIR" "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$WORKSPACE_DIR" "$LEGACY_STATE_BACKUP"
@@ -374,12 +388,17 @@ ok "pip ready"
 # to avoid pip pulling NVIDIA CUDA packages. Apple Silicon uses native PyTorch.
 if [[ "$PLATFORM" == "Linux" && ( "$ARCH" == "aarch64" || "$ARCH" == "arm64" ) ]]; then
   header "Installing CPU-only PyTorch for ARM64 Linux"
-  run_cmd "Installing CPU-only PyTorch" "$APP_DIR/.venv/bin/python" -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+  info "This is a large package and may take several minutes."
+  info "Download/install progress will be shown below."
+  run_cmd_live "Installing CPU-only PyTorch" "$APP_DIR/.venv/bin/python" -m pip install --progress-bar on torch --index-url https://download.pytorch.org/whl/cpu
   ok "CPU-only PyTorch installed"
 fi
 
 header "Installing dependencies"
-run_cmd "Installing Python dependencies" "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
+info "Installing packages from requirements.txt."
+info "This can take several minutes, especially on a Raspberry Pi."
+info "Package download and installation progress will be shown below."
+run_cmd_live "Installing Python dependencies" "$APP_DIR/.venv/bin/python" -m pip install --progress-bar on -r "$APP_DIR/requirements.txt"
 ok "Dependencies installed"
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$CACHE_DIR" "$WORKSPACE_DIR"

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import re
 import time
 import urllib.error
@@ -29,7 +30,7 @@ _TASK_INDEX_MAP = {}
 COMMANDS = [
     "/stateless", "/clear", "/history", "/memory", "/notes",
     "/usage", "/audit", "/status", "/rules", "/tasks", "/inbox",
-    "/help", "/exit", "/quit",
+    "/setup", "/calendar", "/help", "/exit", "/quit",
 ]
 
 
@@ -323,7 +324,7 @@ def show_help():
         ("Session", [("/stateless","Toggle stateless mode"),("/clear","Clear conversation history")]),
         ("Usage", [("/usage","Current session"),("/usage today","Today"),("/usage yesterday","Yesterday"),("/usage week","Current week"),("/usage month","Current month"),("/usage last 7d","Last 7 days"),("/usage last 30d","Last 30 days"),("/usage YYYY-MM-DD","Specific date"),("/usage YYYY-MM-DD YYYY-MM-DD","Date range"),("/usage all","All recorded usage")]),
         ("Activity", [("/audit","Recent agent activity"),("/audit today","Today's activity"),("/audit denied","Blocked activity"),("/audit last <number>","Last N activity records")]),
-        ("Agent", [("/status","Show agent status"),("/rules","Show behavior rules"),("/help","Show command help")]),
+        ("Agent", [("/status","Show agent status"),("/rules","Show behavior rules"),("/setup calendar","Connect Google Calendar"),("/calendar status","Show Google Calendar connection"),("/calendar disconnect","Disconnect Google Calendar"),("/help","Show command help")]),
         ("Exit", [("/exit","Exit the client"),("/quit","Exit the client")]),
     ]
     command_width = 34
@@ -1215,6 +1216,48 @@ def main():
                     show_audit(argument)
                 except RuntimeError as exc:
                     console.print(f"\n[yellow]{exc}[/yellow]\n")
+                continue
+
+            if lowered == "/setup":
+                console.print("\n[dim]Available setup:[/dim] /setup calendar\n")
+                continue
+            if lowered == "/setup calendar":
+                # A browser-based loopback OAuth flow works directly when the
+                # agent is installed on the local desktop.  Over SSH, however,
+                # opening a browser on the remote host is not useful.  If the
+                # same Google OAuth client/account has already been authorized
+                # locally, copying both JSON files is sufficient: the remote
+                # server can refresh its own access tokens using the stored
+                # refresh token.
+                if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY"):
+                    console.print("\n[bold]Remote Google Calendar setup[/bold]")
+                    console.print("This Agent session is running over SSH, so browser authorization will not be started on this host.\n")
+                    console.print("From the computer where Google Calendar is already connected, copy these two files to this server:")
+                    console.print("  [cyan]google_credentials.json[/cyan]")
+                    console.print("  [cyan]google_token.json[/cyan]")
+                    console.print("\nDestination on Linux/Raspberry Pi:")
+                    console.print("  [cyan]~/.config/personal-agent/[/cyan]")
+                    console.print("\nThen run [bold]/calendar status[/bold]. No second Google authorization is required when the files use the same OAuth client/account/scope.\n")
+                    continue
+
+                console.print("\n[dim]Opening Google authorization in your browser...[/dim]")
+                result = api("POST", "/calendar/setup")
+                if result.get("connected"):
+                    console.print("[green]✓ Google Calendar connected.[/green]\n")
+                else:
+                    console.print("[yellow]Google Calendar setup did not complete.[/yellow]\n")
+                continue
+            if lowered == "/calendar" or lowered == "/calendar status":
+                result = api("GET", "/calendar/status")
+                if result.get("connected"):
+                    console.print("\n[green]✓ Google Calendar connected.[/green]\n")
+                else:
+                    console.print("\n[dim]Google Calendar is not connected.[/dim]\n")
+                continue
+            if lowered == "/calendar disconnect":
+                result = api("DELETE", "/calendar")
+                if result.get("success"):
+                    console.print("\n[green]✓ Google Calendar disconnected.[/green]\n")
                 continue
 
             if lowered == "/status":

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from dotenv import load_dotenv
@@ -81,6 +82,14 @@ for directory in (CONFIG_DIR, DATA_DIR, CACHE_DIR, WORKSPACE_DIR):
 ENV_FILE = CONFIG_DIR / ".env"
 load_dotenv(ENV_FILE)
 
+# Optional explicit local timezone for headless/remote hosts (for example, a Pi running UTC).
+# If unset, preserve the operating system's local timezone behavior.
+AGENT_TIMEZONE = os.getenv("AGENT_TIMEZONE", "").strip()
+if AGENT_TIMEZONE:
+    os.environ["TZ"] = AGENT_TIMEZONE
+    if hasattr(time, "tzset"):
+        time.tzset()
+
 client = OpenAI()
 console = Console()
 
@@ -89,6 +98,7 @@ MODEL = os.getenv("AGENT_MODEL", "gpt-5.6-luna").strip() or "gpt-5.6-luna"
 MEMORY_FILE = DATA_DIR / "memory.json"
 MEMORY_EMBEDDINGS_FILE = CACHE_DIR / "memory_embeddings.npz"
 GOOGLE_TOKEN_FILE = CONFIG_DIR / "google_token.json"
+GOOGLE_CREDENTIALS_FILE = CONFIG_DIR / "google_credentials.json"
 RULES_FILE = DATA_DIR / "rules.json"
 NOTES_DB_FILE = DATA_DIR / "notes.db"
 NOTE_EMBEDDINGS_FILE = CACHE_DIR / "note_embeddings.npz"
@@ -108,7 +118,14 @@ def _env_int(name, default, minimum=1, maximum=None):
 
 
 MEMORY_RETRIEVAL_LIMIT = _env_int("MEMORY_RETRIEVAL_LIMIT", 5, 1, 100)
-MAX_TOOL_ROUNDS = _env_int("MAX_TOOL_ROUNDS", 12, 1, 100)
+MAX_TOOL_ROUNDS = _env_int("MAX_TOOL_ROUNDS", 8, 1, 100)
+SCHEDULED_TASK_MAX_TOOL_ROUNDS = _env_int("SCHEDULED_TASK_MAX_TOOL_ROUNDS", 4, 1, 20)
+INTERACTIVE_MAX_WEB_SEARCHES = _env_int("INTERACTIVE_MAX_WEB_SEARCHES", 5, 1, 50)
+SCHEDULED_TASK_MAX_WEB_SEARCHES = _env_int("SCHEDULED_TASK_MAX_WEB_SEARCHES", 3, 1, 20)
+SCHEDULED_TASK_PREVIOUS_RESULT_MAX_CHARS = _env_int("SCHEDULED_TASK_PREVIOUS_RESULT_MAX_CHARS", 3000, 500, 20000)
+TOOL_OUTPUT_MAX_CHARS = _env_int("TOOL_OUTPUT_MAX_CHARS", 12000, 1000, 100000)
+SCHEDULED_TASK_TIMEOUT_SECONDS = _env_int("SCHEDULED_TASK_TIMEOUT_SECONDS", 120, 15, 3600)
+SCHEDULED_TASK_FAILURE_DISABLE_THRESHOLD = _env_int("SCHEDULED_TASK_FAILURE_DISABLE_THRESHOLD", 3, 1, 20)
 SCHEDULER_POLL_SECONDS = _env_int("SCHEDULER_POLL_SECONDS", 60, 1, 3600)
 MAX_SCHEDULED_NOTIFICATIONS = _env_int("MAX_SCHEDULED_NOTIFICATIONS", 5, 1, 20)
 # Fail closed for paid background work: by default, each scheduled occurrence
@@ -1105,21 +1122,15 @@ with _notes_connection():
     pass
 
 def get_current_datetime():
-    now = datetime.now()
+    now = datetime.now().astimezone()
 
     return {
-        "datetime": now.isoformat(
-            timespec="seconds"
-        ),
-        "date": now.strftime(
-            "%Y-%m-%d"
-        ),
-        "time": now.strftime(
-            "%H:%M:%S"
-        ),
-        "weekday": now.strftime(
-            "%A"
-        )
+        "datetime": now.isoformat(timespec="seconds"),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+        "timezone": AGENT_TIMEZONE or (now.tzname() or "local"),
+        "utc_offset": now.strftime("%z"),
     }
 
 
@@ -1751,7 +1762,7 @@ def workspace_delete(path):
 # Dynamic tools
 # --------------------------------------------------
 
-def build_tools():
+def build_tools(request_type="interactive", allow_web=True):
     categories = get_memory_categories()
 
     retrieval_categories = (
@@ -2328,6 +2339,27 @@ def build_tools():
             "type": "web_search"
         }
     ]
+
+    # Background jobs should be research/monitoring workers, not unattended
+    # mutation agents. Keep read/search tools available, but remove persistent
+    # writes, destructive operations, scheduling, and notification writes.
+    if request_type == "task":
+        blocked = {
+            "remember", "update_memory", "delete_memory",
+            "create_category", "update_category", "delete_category",
+            "move_note", "create_note", "update_note", "delete_note",
+            "create_notification", "create_scheduled_task",
+            "update_scheduled_task", "delete_scheduled_task",
+            "create_calendar_event", "update_calendar_event", "delete_calendar_event",
+            "workspace_write", "workspace_mkdir", "workspace_move",
+            "workspace_copy", "workspace_delete",
+            "propose_rule_change",
+        }
+        tools = [t for t in tools if t.get("name") not in blocked]
+
+    if not allow_web:
+        tools = [t for t in tools if t.get("type") != "web_search"]
+
     # Relevant memories are attached automatically by local semantic retrieval.
     return tools
 
@@ -2970,8 +3002,19 @@ def run_agent(
         if status_callback:
             status_callback(activity_group)
 
+    is_task = request_type == "task"
+    max_tool_rounds = SCHEDULED_TASK_MAX_TOOL_ROUNDS if is_task else MAX_TOOL_ROUNDS
+    max_web_searches = SCHEDULED_TASK_MAX_WEB_SEARCHES if is_task else INTERACTIVE_MAX_WEB_SEARCHES
+    deadline = (turn_started + SCHEDULED_TASK_TIMEOUT_SECONDS) if is_task else None
+
     turn_instructions = build_instructions()
-    turn_tools = build_tools()
+    if is_task:
+        turn_instructions += (
+            "\n\nBACKGROUND EFFICIENCY: Use the minimum necessary tool calls and searches. "
+            "Do not broaden research beyond the task. Stop as soon as sufficient reliable "
+            "information is available and produce the best result from evidence already gathered."
+        )
+    turn_tools = build_tools(request_type=request_type, allow_web=True)
     turn_context_management = get_context_management()
 
     request = {
@@ -3015,11 +3058,35 @@ def run_agent(
             )
             return response.output_text, response.id, timing
 
-        if tool_rounds >= MAX_TOOL_ROUNDS:
+        if deadline is not None and time.perf_counter() >= deadline:
             raise RuntimeError(
-                f"Maximum tool rounds reached ({MAX_TOOL_ROUNDS}). "
-                "Increase MAX_TOOL_ROUNDS in .env if this task legitimately needs more."
+                f"Scheduled task timeout reached ({SCHEDULED_TASK_TIMEOUT_SECONDS}s)."
             )
+
+        if tool_rounds >= max_tool_rounds:
+            # Budget exhaustion is not a task failure. Deny the outstanding calls
+            # and give the model one final tool-free response using evidence already gathered.
+            tool_outputs = [{
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": json.dumps({
+                    "success": False,
+                    "error": "Tool budget exhausted; finish now using information already available."
+                })
+            } for call in tool_calls]
+            diagnostic_request_number += 1
+            response = create_response_streaming(
+                status_callback=emit_status_once,
+                diagnostic_request_number=diagnostic_request_number,
+                model=MODEL,
+                instructions=turn_instructions,
+                previous_response_id=response.id,
+                input=tool_outputs,
+                tools=[],
+                context_management=turn_context_management,
+            )
+            record_usage(response)
+            continue
         tool_rounds += 1
 
         tool_outputs = []
@@ -3048,10 +3115,19 @@ def run_agent(
                 )
                 result = {"success": False, "error": str(e)}
 
+            serialized_result = json.dumps(result, ensure_ascii=False)
+            if len(serialized_result) > TOOL_OUTPUT_MAX_CHARS:
+                serialized_result = json.dumps({
+                    "success": True,
+                    "truncated": True,
+                    "content": serialized_result[:TOOL_OUTPUT_MAX_CHARS],
+                    "notice": "Tool output was truncated by the system efficiency limit."
+                }, ensure_ascii=False)
+
             tool_outputs.append({
                 "type": "function_call_output",
                 "call_id": call.call_id,
-                "output": json.dumps(result, ensure_ascii=False)
+                "output": serialized_result
             })
 
         diagnostic_request_number += 1
@@ -3062,7 +3138,10 @@ def run_agent(
             instructions=turn_instructions,
             previous_response_id=response.id,
             input=tool_outputs,
-            tools=turn_tools,
+            tools=build_tools(
+                request_type=request_type,
+                allow_web=_USAGE_CONTEXT.turn_timing["web_searches"] < max_web_searches,
+            ),
             context_management=turn_context_management
         )
 
@@ -3121,6 +3200,14 @@ def init_database():
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        task_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(scheduled_tasks)").fetchall()
+        }
+        if "consecutive_failures" not in task_columns:
+            conn.execute(
+                "ALTER TABLE scheduled_tasks ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0"
+            )
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS scheduled_task_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3626,6 +3713,9 @@ def _run_scheduled_task(task, advance_schedule=False):
         origin="task", request_id=task_request_id,
     )
     previous = (task.get("last_result") or "").strip()
+    if len(previous) > SCHEDULED_TASK_PREVIOUS_RESULT_MAX_CHARS:
+        previous = previous[-SCHEDULED_TASK_PREVIOUS_RESULT_MAX_CHARS:]
+        previous = "[Earlier content omitted for efficiency.]\n" + previous
     previous_context = previous if previous else "(No previous result.)"
     execution_prompt = f"""[SCHEDULED TASK EXECUTION]
 This is an automatic scheduled task, not a user request to create another schedule.
@@ -3817,7 +3907,7 @@ def _task_worker_loop():
                 # already-advanced recurrence.
                 if job["task_id"] is not None:
                     conn.execute(
-                        "UPDATE scheduled_tasks SET last_run_at=?, last_result=? WHERE id=?",
+                        "UPDATE scheduled_tasks SET last_run_at=?, last_result=?, consecutive_failures=0 WHERE id=?",
                         (finished_at, result.get("last_result", ""), job["task_id"]),
                     )
                 conn.execute("DELETE FROM scheduled_task_queue WHERE id=?", (job["id"],))
@@ -3838,6 +3928,29 @@ def _task_worker_loop():
                         "DELETE FROM scheduled_task_queue WHERE id=?",
                         (job["id"],),
                     )
+                    if job["task_id"] is not None:
+                        conn.execute(
+                            "UPDATE scheduled_tasks SET consecutive_failures=consecutive_failures+1 WHERE id=?",
+                            (job["task_id"],),
+                        )
+                        row = conn.execute(
+                            "SELECT name, consecutive_failures FROM scheduled_tasks WHERE id=?",
+                            (job["task_id"],),
+                        ).fetchone()
+                        if row and int(row["consecutive_failures"]) >= SCHEDULED_TASK_FAILURE_DISABLE_THRESHOLD:
+                            conn.execute(
+                                "UPDATE scheduled_tasks SET enabled=0 WHERE id=?",
+                                (job["task_id"],),
+                            )
+                            conn.execute(
+                                "INSERT INTO notifications(task_id,title,summary,content) VALUES(?,?,?,?)",
+                                (
+                                    job["task_id"],
+                                    "Scheduled task disabled",
+                                    f"{row['name']} was disabled after repeated failures.",
+                                    f"The task failed {row['consecutive_failures']} consecutive scheduled occurrences. Last error: {error}",
+                                ),
+                            )
                 else:
                     conn.execute(
                         "UPDATE scheduled_task_queue SET status='queued', started_at=NULL, last_error=? WHERE id=?",
@@ -3866,6 +3979,68 @@ def start_scheduler():
     _TASK_WORKER_THREAD.start()
     console.print("[cyan]⏰ Scheduler ready.[/cyan]")
 
+
+
+# --------------------------------------------------
+# Google Calendar local OAuth setup
+# --------------------------------------------------
+
+def google_calendar_connection_status():
+    if not GOOGLE_TOKEN_FILE.exists():
+        return {"connected": False, "status": "not_connected"}
+    try:
+        credentials = Credentials.from_authorized_user_file(
+            GOOGLE_TOKEN_FILE, CALENDAR_SCOPES
+        )
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            GOOGLE_TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
+            try:
+                os.chmod(GOOGLE_TOKEN_FILE, 0o600)
+            except OSError:
+                pass
+        return {
+            "connected": bool(credentials.valid),
+            "status": "connected" if credentials.valid else "invalid",
+        }
+    except Exception as exc:
+        return {"connected": False, "status": "invalid", "error": str(exc)}
+
+
+def setup_google_calendar_local():
+    if not GOOGLE_CREDENTIALS_FILE.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Google OAuth credentials were not found at "
+                f"{GOOGLE_CREDENTIALS_FILE}. Download a Desktop app OAuth JSON "
+                "from Google Cloud and save it there as google_credentials.json."
+            ),
+        )
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            str(GOOGLE_CREDENTIALS_FILE),
+            scopes=CALENDAR_SCOPES,
+        )
+        credentials = flow.run_local_server(port=0, open_browser=True)
+        GOOGLE_TOKEN_FILE.write_text(credentials.to_json(), encoding="utf-8")
+        try:
+            os.chmod(GOOGLE_TOKEN_FILE, 0o600)
+        except OSError:
+            pass
+        return {"success": True, "connected": True, "status": "connected"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Google Calendar setup failed: {exc}") from exc
+
+
+def disconnect_google_calendar():
+    try:
+        GOOGLE_TOKEN_FILE.unlink(missing_ok=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not remove Google Calendar token: {exc}") from exc
+    return {"success": True, "connected": False, "status": "not_connected"}
 
 
 # --------------------------------------------------
@@ -3925,6 +4100,21 @@ def status():
         "history_messages": get_history_count(),
         "conversation_active": bool(get_state("previous_response_id")),
     }
+
+
+@app.get("/calendar/status")
+def calendar_status():
+    return google_calendar_connection_status()
+
+
+@app.post("/calendar/setup")
+def calendar_setup():
+    return setup_google_calendar_local()
+
+
+@app.delete("/calendar")
+def calendar_disconnect():
+    return disconnect_google_calendar()
 
 
 @app.post("/chat")
