@@ -370,8 +370,8 @@ ok "Python $("$PYTHON_BIN" -c 'import sys; print(".".join(map(str,sys.version_in
 TMP_DIR="$(mktemp -d)"
 header "Downloading Personal AI Agent"
 run_cmd "Downloading Personal AI Agent" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$TMP_DIR/repo"
-for f in agent agent-server requirements.txt; do
-  [[ -e "$TMP_DIR/repo/$f" ]] || die "Repository is missing required file: $f"
+for f in agent agent-server requirements.txt web/index.html web/app.js web/themes/tide/style.css; do
+  [[ -f "$TMP_DIR/repo/$f" ]] || die "Repository is missing required file: $f"
 done
 mkdir -p "$(dirname "$APP_DIR")"
 mv "$TMP_DIR/repo" "$APP_DIR"
